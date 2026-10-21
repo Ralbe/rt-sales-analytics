@@ -1,0 +1,253 @@
+from datetime import date
+from decimal import Decimal
+from io import BytesIO
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.orm import Session
+
+from app.core import cache
+from app.db import get_db
+from app.deps import PROJECT_EDITORS, get_current_user, manager_scope, require_roles
+from app.models import CLOSED_STAGES, STAGE_LABELS, Client, Project, Role, Service, Stage, User
+from app.schemas import NameCheckOut, ProjectIn, ProjectOut, ProjectPage
+from app.services import audit
+
+router = APIRouter(prefix="/projects", tags=["projects"])
+
+SORT_FIELDS = {
+    "name": Project.name,
+    "amount": Project.amount,
+    "start_date": Project.start_date,
+    "expected_close_date": Project.expected_close_date,
+    "updated_at": Project.updated_at,
+}
+SORT_PATTERN = r"^-?(name|amount|start_date|expected_close_date|updated_at)$"
+EXPORT_LIMIT = 10_000
+
+
+def to_out(p: Project) -> dict:
+    margin = p.amount - p.cost
+    return {
+        "id": p.id,
+        "name": p.name,
+        "description": p.description,
+        "client": p.client,
+        "segment": p.client.segment,
+        "manager": p.manager,
+        "service": p.service,
+        "stage": p.stage,
+        "amount": p.amount,
+        "cost": p.cost,
+        "margin": margin,
+        "margin_pct": round(float(margin / p.amount * 100), 1) if p.amount else None,
+        "probability": p.probability,
+        "start_date": p.start_date,
+        "expected_close_date": p.expected_close_date,
+        "closed_at": p.closed_at,
+        "updated_at": p.updated_at,
+    }
+
+
+def _filtered_query(
+    user: User,
+    q: str,
+    segment_id: list[int],
+    service_id: list[int],
+    manager_id: list[int],
+    stage: list[Stage],
+    open_only: bool,
+) -> Select:
+    stmt = select(Project).join(Client, Client.id == Project.client_id)
+    scope = manager_scope(user)
+    if scope is not None:
+        stmt = stmt.where(Project.manager_id == scope)
+    q = q.strip()
+    if q:
+        stmt = stmt.where(or_(Project.name.ilike(f"%{q}%"), Client.name.ilike(f"%{q}%"), Client.inn.startswith(q)))
+    if segment_id:
+        stmt = stmt.where(Client.segment_id.in_(segment_id))
+    if service_id:
+        stmt = stmt.where(Project.service_id.in_(service_id))
+    if manager_id:
+        stmt = stmt.where(Project.manager_id.in_(manager_id))
+    if stage:
+        stmt = stmt.where(Project.stage.in_(stage))
+    if open_only:
+        stmt = stmt.where(Project.stage.notin_(CLOSED_STAGES))
+    return stmt
+
+
+class ListParams:
+    def __init__(
+        self,
+        q: str = Query(default="", max_length=100),
+        segment_id: list[int] = Query(default=[]),
+        service_id: list[int] = Query(default=[]),
+        manager_id: list[int] = Query(default=[]),
+        stage: list[Stage] = Query(default=[]),
+        open_only: bool = False,
+        sort: str = Query(default="-updated_at", pattern=SORT_PATTERN),
+    ):
+        self.q, self.segment_id, self.service_id = q, segment_id, service_id
+        self.manager_id, self.stage, self.open_only, self.sort = manager_id, stage, open_only, sort
+
+    def query(self, user: User) -> Select:
+        stmt = _filtered_query(
+            user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only
+        )
+        column = SORT_FIELDS[self.sort.lstrip("-")]
+        return stmt.order_by(column.desc() if self.sort.startswith("-") else column.asc(), Project.id.desc())
+
+
+@router.get("", response_model=ProjectPage)
+def list_projects(
+    params: ListParams = Depends(),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    stmt = params.query(user)
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
+    items = db.scalars(stmt.offset((page - 1) * size).limit(size)).unique().all()
+    return {"items": [to_out(p) for p in items], "total": total, "page": page, "size": size}
+
+
+@router.get("/check-name", response_model=NameCheckOut)
+def check_name(
+    name: str = Query(min_length=1, max_length=300),
+    client_id: int = Query(),
+    exclude_id: int | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Проверка на дубль во время ввода (до отправки формы)."""
+    return {"available": _find_duplicate(db, " ".join(name.split()), client_id, exclude_id) is None}
+
+
+@router.get("/export.xlsx")
+def export_projects(
+    params: ListParams = Depends(),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    projects = db.scalars(params.query(user).limit(EXPORT_LIMIT)).unique().all()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Проекты"
+    headers = [
+        "ID", "Проект", "Клиент", "ИНН", "Сегмент", "Услуга", "Ответственный", "Стадия",
+        "Сумма, ₽", "Себестоимость, ₽", "Маржа, ₽", "Вероятность, %", "Начало", "План закрытия", "Закрыт",
+    ]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for p in projects:
+        ws.append([
+            p.id, p.name, p.client.name, p.client.inn, p.client.segment.name, p.service.name, p.manager.full_name,
+            STAGE_LABELS[p.stage], float(p.amount), float(p.cost), float(p.amount - p.cost), p.probability,
+            p.start_date, p.expected_close_date, p.closed_at,
+        ])
+    widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12]
+    for column, width in zip("ABCDEFGHIJKLMNO", widths, strict=True):
+        ws.column_dimensions[column].width = width
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="projects_{date.today():%Y%m%d}.xlsx"'},
+    )
+
+
+def _get_visible(db: Session, project_id: int, user: User) -> Project:
+    project = db.get(Project, project_id)
+    scope = manager_scope(user)
+    if project is None or (scope is not None and project.manager_id != scope):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Проект не найден")
+    return project
+
+
+@router.get("/{project_id}", response_model=ProjectOut)
+def get_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    return to_out(_get_visible(db, project_id, user))
+
+
+def _find_duplicate(db: Session, name: str, client_id: int, exclude_id: int | None) -> Project | None:
+    # Сравнение без учёта регистра в Python: одинаково работает с кириллицей в любой СУБД.
+    # Проектов у одного клиента немного, поэтому выборка дешёвая.
+    stmt = select(Project).where(Project.client_id == client_id)
+    if exclude_id is not None:
+        stmt = stmt.where(Project.id != exclude_id)
+    key = name.casefold()
+    return next((p for p in db.scalars(stmt).unique() if p.name.casefold() == key), None)
+
+
+def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
+    if db.get(Client, data.client_id) is None:
+        raise HTTPException(422, {"field": "client_id", "message": "Клиент не найден"})
+    if db.get(Service, data.service_id) is None:
+        raise HTTPException(422, {"field": "service_id", "message": "Услуга не найдена"})
+
+    if user.role == Role.manager:
+        manager_id = user.id
+    else:
+        manager_id = data.manager_id or user.id
+        manager = db.get(User, manager_id)
+        if manager is None or manager.role not in (Role.manager, Role.head):
+            raise HTTPException(422, {"field": "manager_id", "message": "Ответственный не найден"})
+
+    if _find_duplicate(db, data.name, data.client_id, project.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, {"field": "name", "message": "У этого клиента уже есть проект с таким названием"}
+        )
+
+    was_closed = project.stage in CLOSED_STAGES if project.stage else False
+    for field, value in data.model_dump(exclude={"manager_id"}).items():
+        setattr(project, field, value)
+    project.manager_id = manager_id
+    if data.stage in CLOSED_STAGES:
+        if not was_closed or project.closed_at is None:
+            project.closed_at = max(date.today(), data.start_date)
+    else:
+        project.closed_at = None
+
+
+@router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
+def create_project(
+    data: ProjectIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*PROJECT_EDITORS)),
+) -> dict:
+    project = Project(cost=Decimal("0"))
+    _apply(db, project, data, user)
+    db.add(project)
+    db.flush()
+    audit.record(db, user.id, "create", "project", project.id, name=project.name)
+    db.commit()
+    cache.bump("analytics")
+    db.refresh(project)
+    return to_out(project)
+
+
+@router.put("/{project_id}", response_model=ProjectOut)
+def update_project(
+    project_id: int,
+    data: ProjectIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*PROJECT_EDITORS)),
+) -> dict:
+    project = _get_visible(db, project_id, user)
+    before = {"stage": project.stage.value, "amount": str(project.amount)}
+    _apply(db, project, data, user)
+    audit.record(db, user.id, "update", "project", project.id, before=before,
+                 after={"stage": project.stage.value, "amount": str(project.amount)})
+    db.commit()
+    cache.bump("analytics")
+    db.refresh(project)
+    return to_out(project)

@@ -1,0 +1,149 @@
+:root {
+  --bg: #f4f5f9;
+  --surface: #ffffff;
+  --surface-2: #f8f9fc;
+  --border: #e3e6ee;
+  --text: #1c1f2b;
+  --muted: #6b7183;
+  --accent: #6c3fd1;
+  --accent-soft: #efe9fc;
+  --accent-text: #ffffff;
+  --sidebar: #241a42;
+  --sidebar-text: #d9d3ee;
+  --sidebar-active: #3a2c66;
+  --good: #1a8f5a;
+  --bad: #d23c3c;
+  --warn: #c77700;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(20, 22, 40, 0.06), 0 2px 8px rgba(20, 22, 40, 0.04);
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); }
+a { color: var(--accent); text-decoration: none; }
+h1 { font-size: 20px; margin: 0; font-weight: 600; }
+h2 { font-size: 16px; margin: 0; font-weight: 600; }
+
+/* --- Каркас приложения: всё в пределах экрана --- */
+.app { display: grid; grid-template-columns: 232px 1fr; height: 100vh; overflow: hidden; }
+.main { display: flex; flex-direction: column; min-width: 0; height: 100vh; overflow: hidden; }
+.page-header { display: flex; align-items: center; gap: 12px; padding: 14px 20px 10px; flex-wrap: wrap; }
+.page-header .spacer { flex: 1; }
+.page-body { flex: 1; min-height: 0; padding: 0 20px 16px; overflow: auto; }
+
+.sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; overflow-y: auto; }
+.sidebar .brand { font-weight: 700; color: #fff; font-size: 16px; padding: 4px 10px 14px; letter-spacing: .2px; }
+.sidebar .brand span { color: #ff8a3d; }
+.sidebar .section { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; opacity: .6; padding: 14px 10px 4px; }
+.sidebar a, .sidebar button.link { display: block; color: var(--sidebar-text); padding: 7px 10px; border-radius: 8px; font-size: 14px; background: none; border: 0; text-align: left; width: 100%; cursor: pointer; font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar a:hover, .sidebar button.link:hover { background: rgba(255,255,255,.06); }
+.sidebar a.active { background: var(--sidebar-active); color: #fff; }
+.sidebar .user { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid rgba(255,255,255,.1); font-size: 13px; }
+.sidebar .user .role { opacity: .65; font-size: 12px; }
+
+/* --- Элементы управления --- */
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: #c9cdda; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { color: var(--bad); }
+.btn.small { height: 28px; padding: 0 10px; font-size: 13px; }
+.btn.icon { width: 28px; height: 28px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
+.btn.icon:hover { background: var(--surface-2); border-color: var(--border); }
+
+.input, .select, .textarea { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font: inherit; color: var(--text); }
+.textarea { height: auto; padding: 8px 10px; resize: vertical; }
+.input:focus, .select:focus, .textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.input[readonly] { background: var(--surface-2); }
+.has-error .input, .has-error .select, .has-error .textarea { border-color: var(--bad); }
+
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label { font-size: 12px; color: var(--muted); font-weight: 500; }
+.field label .req { color: var(--bad); }
+.field .error { color: var(--bad); font-size: 12px; min-height: 16px; }
+.field .hint { color: var(--muted); font-size: 12px; min-height: 16px; }
+.field .ok { color: var(--good); font-size: 12px; min-height: 16px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.alert { padding: 10px 12px; border-radius: 8px; background: #fdecec; color: var(--bad); font-size: 13px; }
+.alert.info { background: var(--accent-soft); color: #4b2a9a; }
+.muted { color: var(--muted); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
+.badge.won { background: #e5f5ec; color: var(--good); border-color: #c4e8d4; }
+.badge.lost { background: #fdecec; color: var(--bad); border-color: #f5caca; }
+
+/* --- Вход --- */
+.auth-wrap { min-height: 100vh; display: grid; place-items: center; padding: 16px; background: linear-gradient(135deg, #241a42, #4a2f8f); }
+.auth-card { width: 100%; max-width: 380px; padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+.auth-card .steps { display: flex; gap: 6px; }
+.auth-card .steps span { flex: 1; height: 4px; border-radius: 2px; background: var(--border); }
+.auth-card .steps span.on { background: var(--accent); }
+.qr { display: grid; place-items: center; padding: 12px; background: var(--surface-2); border-radius: 8px; }
+.code-input { letter-spacing: 8px; font-size: 22px; text-align: center; height: 48px; }
+
+/* --- Фильтры --- */
+.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ms { position: relative; }
+.ms-panel { position: absolute; top: 38px; left: 0; z-index: 50; min-width: 240px; max-height: 320px; overflow: auto; padding: 6px; }
+.ms-panel label { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.ms-panel label:hover { background: var(--surface-2); }
+
+/* --- Дашборд --- */
+.grid-host { height: 100%; min-height: 0; position: relative; }
+.widget { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.widget-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0 14px; min-height: 36px; }
+.widget-head .title { flex: 1; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.widget-drag { cursor: grab; }
+.widget-body { flex: 1; min-height: 0; padding: 4px 14px 10px; position: relative; }
+.widget-menu { position: absolute; right: 8px; top: 34px; z-index: 30; padding: 6px; min-width: 200px; }
+.widget-menu .group { font-size: 11px; color: var(--muted); padding: 6px 8px 2px; text-transform: uppercase; letter-spacing: .5px; }
+.widget-menu button { display: block; width: 100%; text-align: left; padding: 6px 8px; border: 0; background: none; border-radius: 6px; font: inherit; cursor: pointer; }
+.widget-menu button:hover { background: var(--surface-2); }
+.widget-menu button.on { color: var(--accent); font-weight: 600; }
+.react-grid-item.react-grid-placeholder { background: var(--accent); opacity: .15; border-radius: var(--radius); }
+
+.kpi { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: 2px; }
+.kpi .value { font-size: clamp(20px, 2.2vw, 30px); font-weight: 700; letter-spacing: -.5px; }
+.kpi .delta { font-size: 13px; }
+.kpi .delta.up { color: var(--good); }
+.kpi .delta.down { color: var(--bad); }
+
+/* --- Таблицы --- */
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; color: var(--muted); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); white-space: nowrap; }
+.table th.sortable { cursor: pointer; user-select: none; }
+.table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.table tr.clickable { cursor: pointer; }
+.table tr.clickable:hover td { background: var(--surface-2); }
+.table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pager { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 10px 0 0; }
+
+/* --- Форма проекта: один экран --- */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; padding: 18px 20px 8px; }
+.form-grid .col { display: flex; flex-direction: column; gap: 2px; }
+.form-grid .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-footer { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.form-footer .spacer { flex: 1; }
+
+.combo { position: relative; }
+.combo-list { position: absolute; top: 38px; left: 0; right: 0; z-index: 40; max-height: 260px; overflow: auto; padding: 4px; }
+.combo-list button { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 7px 8px; border: 0; background: none; border-radius: 6px; font: inherit; cursor: pointer; }
+.combo-list button.hl, .combo-list button:hover { background: var(--accent-soft); }
+.combo-list .create { color: var(--accent); border-top: 1px solid var(--border); margin-top: 4px; }
+
+.modal-backdrop { position: fixed; inset: 0; background: rgba(20, 16, 40, .45); display: grid; place-items: center; z-index: 100; padding: 16px; }
+.modal { width: 100%; max-width: 460px; padding: 20px; display: flex; flex-direction: column; gap: 10px; max-height: 90vh; overflow: auto; }
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; overflow: visible; }
+  .main { height: auto; overflow: visible; }
+  .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 12px; }
+  .sidebar .section, .sidebar .user { display: none; }
+  .sidebar a, .sidebar button.link { width: auto; }
+  .form-grid { grid-template-columns: 1fr; }
+  .page-header, .page-body { padding-left: 16px; padding-right: 16px; }
+}

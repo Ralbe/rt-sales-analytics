@@ -1,0 +1,17 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg[binary]==3.2.3
+pydantic==2.10.4
+pydantic-settings==2.7.0
+bcrypt==4.2.1
+pyjwt==2.10.1
+pyotp==2.9.0
+redis==5.2.1
+celery==5.4.0
+pandas==2.2.3
+numpy==2.2.1
+statsmodels==0.14.4
+openpyxl==3.1.5
+prometheus-fastapi-instrumentator==7.0.0

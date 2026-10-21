@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: default
+    folder: RT Analytics
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards
