@@ -77,6 +77,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
     rng = random.Random(42)
     today = today or date.today()
 
+<<<<<<< HEAD
     # 1. Безопасное добавление Сегментов
     existing_segments = set(db.scalars(select(Segment.name)).all())
     segments = [
@@ -118,6 +119,19 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
     all_services = {s.name: s for s in db.scalars(select(Service)).all()}
     # Пересоздаем список сегментов для корректной привязки ID к клиентам
     all_segments = db.scalars(select(Segment)).all()
+=======
+    segments = [Segment(name=n) for n in dict.fromkeys(SEGMENTS + SPEC_SEGMENTS)]
+    services = {
+        name: Service(name=name, group_name=SPEC_SERVICES.get(name))
+        for name in dict.fromkeys(list(SERVICES) + list(SPEC_SERVICES))
+    }
+    references = [
+        ReferenceValue(category=category, code=code, name=name, position=position, probability=probability)
+        for category, items in REFERENCE_DATA.items()
+        for code, name, position, probability in items
+    ]
+    db.add_all(segments + list(services.values()) + references)
+>>>>>>> 9aa2de89acd2719334206e3dd3cfe5805b191f74
 
     password_hash = hash_password(DEMO_PASSWORD)
     users = [User(email=e, full_name=n, role=r, password_hash=password_hash) for e, n, r in USERS]
