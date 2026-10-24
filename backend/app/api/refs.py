@@ -34,5 +34,9 @@ def refs(db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> 
         "assessment_statuses": by_category.get("assessment_status", []),
         "project_indicators": by_category.get("project_indicator", []),
         "customer_stages": by_category.get("customer_stage", []),
+        "cost_articles": by_category.get("cost_article", []),
+        "cost_types": by_category.get("cost_type", []),
+        "revenue_statuses": by_category.get("revenue_status", []),
+        "cost_statuses": by_category.get("cost_status", []),
         "roles": [{"id": r.value, "name": label} for r, label in ROLE_LABELS.items()],
     }

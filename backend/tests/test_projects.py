@@ -4,7 +4,7 @@ from io import BytesIO
 from openpyxl import load_workbook
 from sqlalchemy import select
 
-from app.models import Client, Project, Service, User
+from app.models import AuditLog, Client, Project, Service, User
 from app.seed import generate_inn
 
 
@@ -24,6 +24,24 @@ def _payload(db, **overrides):
         "expected_close_date": "2026-12-31",
     }
     return data | overrides
+
+
+def test_project_audit_records_nonfinancial_changes(as_user, db):
+    created = as_user.post("/api/projects", json=_payload(db)).json()
+    response = as_user.put(
+        f"/api/projects/{created['id']}",
+        json=_payload(db, description="Обновлённое описание", management_control=True),
+    )
+    assert response.status_code == 200, response.text
+    log = db.scalar(select(AuditLog).where(
+        AuditLog.entity == "project", AuditLog.entity_id == created["id"], AuditLog.action == "update",
+    ).order_by(AuditLog.id.desc()))
+    assert log.user_id == db.scalar(select(User.id).where(User.email == "manager1@example.com"))
+    assert log.payload["before"]["description"] == ""
+    assert log.payload["after"]["description"] == "Обновлённое описание"
+    assert log.payload["before"]["management_control"] is False
+    assert log.payload["after"]["management_control"] is True
+    assert log.payload["before"]["amount"] == log.payload["after"]["amount"]
 
 
 def test_analyst_sees_all_and_can_edit(as_analyst, db):
