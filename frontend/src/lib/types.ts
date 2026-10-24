@@ -31,6 +31,10 @@ export interface Refs {
   assessment_statuses: RefItem[];
   project_indicators: RefItem[];
   customer_stages: { id: number; name: string; probability: number }[];
+  cost_articles: RefItem[];
+  cost_types: RefItem[];
+  revenue_statuses: RefItem[];
+  cost_statuses: RefItem[];
   roles: { id: Role; name: string }[];
 }
 
@@ -74,6 +78,21 @@ export interface Project {
   period_plan: string;
   created_at: string;
   updated_at: string;
+  financial_entries: FinancialEntry[];
+}
+
+export interface FinancialEntry {
+  id?: number;
+  kind: "revenue" | "cost";
+  year: number;
+  month: number;
+  amount: string;
+  vat_included: boolean;
+  reference_id?: number;
+  status_id?: number;
+  article_id?: number;
+  cost_type_id?: number;
+  reference?: RefItem;
 }
 
 export interface ProjectPage {

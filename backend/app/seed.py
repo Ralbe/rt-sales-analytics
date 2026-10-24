@@ -48,17 +48,53 @@ USERS = [
 ]
 NAME_PREFIX = ["ООО", "АО", "ПАО", "ГБУ", "МУП"]
 NAME_ROOT = [
-    "Северная логистика", "ТехноСфера", "ГорСвет", "Агрохолдинг Поле", "Медицинский центр Здоровье",
-    "Энергосбыт Восток", "Строймонтаж", "Транспортная компания Магистраль", "Фармация Плюс", "Банк Развитие",
-    "Ритейл Групп", "Порт Балтика", "Университет Технологий", "Областная больница №2", "Металлург",
-    "Телеком Регион", "Девелопер Квартал", "Пищекомбинат Нива", "Водоканал", "Аэропорт Сокол",
-    "Школа будущего", "Цифровой регион", "Логистический парк", "Химпром", "Автодор",
-    "Гостиница Волга", "Сеть аптек Доктор", "Нефтесервис", "Машзавод", "Кинотеатры Премьер",
+    "Северная логистика",
+    "ТехноСфера",
+    "ГорСвет",
+    "Агрохолдинг Поле",
+    "Медицинский центр Здоровье",
+    "Энергосбыт Восток",
+    "Строймонтаж",
+    "Транспортная компания Магистраль",
+    "Фармация Плюс",
+    "Банк Развитие",
+    "Ритейл Групп",
+    "Порт Балтика",
+    "Университет Технологий",
+    "Областная больница №2",
+    "Металлург",
+    "Телеком Регион",
+    "Девелопер Квартал",
+    "Пищекомбинат Нива",
+    "Водоканал",
+    "Аэропорт Сокол",
+    "Школа будущего",
+    "Цифровой регион",
+    "Логистический парк",
+    "Химпром",
+    "Автодор",
+    "Гостиница Волга",
+    "Сеть аптек Доктор",
+    "Нефтесервис",
+    "Машзавод",
+    "Кинотеатры Премьер",
 ]
 PROJECT_TEMPLATES = [
-    "Подключение филиалов", "Модернизация сети", "Переезд в облако", "Резервный канал", "Видеоаналитика на объектах",
-    "Защита от DDoS", "Колокация серверов", "Умный учёт ресурсов", "IP-телефония для офисов", "Wi-Fi для посетителей",
-    "SOC-мониторинг", "Частное облако", "Миграция ИТ-инфраструктуры", "Видеонаблюдение периметра", "SD-WAN",
+    "Подключение филиалов",
+    "Модернизация сети",
+    "Переезд в облако",
+    "Резервный канал",
+    "Видеоаналитика на объектах",
+    "Защита от DDoS",
+    "Колокация серверов",
+    "Умный учёт ресурсов",
+    "IP-телефония для офисов",
+    "Wi-Fi для посетителей",
+    "SOC-мониторинг",
+    "Частное облако",
+    "Миграция ИТ-инфраструктуры",
+    "Видеонаблюдение периметра",
+    "SD-WAN",
 ]
 
 
@@ -79,11 +115,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
 
     # 1. Безопасное добавление Сегментов
     existing_segments = set(db.scalars(select(Segment.name)).all())
-    segments = [
-        Segment(name=n)
-        for n in dict.fromkeys(SEGMENTS + SPEC_SEGMENTS)
-        if n not in existing_segments
-    ]
+    segments = [Segment(name=n) for n in dict.fromkeys(SEGMENTS + SPEC_SEGMENTS) if n not in existing_segments]
 
     # 2. Безопасное добавление Услуг
     existing_services = set(db.scalars(select(Service.name)).all())
@@ -102,13 +134,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
             # Проверяем пару (category, code) на уникальность перед добавлением
             if (category, code) not in existing_refs:
                 references.append(
-                    ReferenceValue(
-                        category=category,
-                        code=code,
-                        name=name,
-                        position=position,
-                        probability=probability
-                    )
+                    ReferenceValue(category=category, code=code, name=name, position=position, probability=probability)
                 )
 
     # Сохраняем только уникальные или новые объекты
@@ -168,20 +194,22 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
             closed_at = None
             stage = rng.choices(open_stages, weights=[3, 3, 2, 1.5])[0]
 
-        db.add(Project(
-            name=name,
-            description=f"{base} для клиента {client.name}.",
-            client_id=client.id,
-            manager_id=rng.choice(managers).id,
-            service_id=all_services[service_name].id,
-            stage=stage,
-            amount=amount,
-            cost=cost,
-            probability=STAGE_DEFAULT_PROBABILITY[stage],
-            start_date=start,
-            expected_close_date=max(planned_close, start),
-            closed_at=closed_at,
-        ))
+        db.add(
+            Project(
+                name=name,
+                description=f"{base} для клиента {client.name}.",
+                client_id=client.id,
+                manager_id=rng.choice(managers).id,
+                service_id=all_services[service_name].id,
+                stage=stage,
+                amount=amount,
+                cost=cost,
+                probability=STAGE_DEFAULT_PROBABILITY[stage],
+                start_date=start,
+                expected_close_date=max(planned_close, start),
+                closed_at=closed_at,
+            )
+        )
     db.commit()
     print(f"Создано: {len(users)} пользователей, {len(clients)} клиентов, {projects_count} проектов")
 

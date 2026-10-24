@@ -11,7 +11,7 @@ import { ClientCombobox } from "@/components/ClientCombobox";
 import { ApiError, api, post, put } from "@/lib/api";
 import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
-import type { Project, Stage } from "@/lib/types";
+import type { FinancialEntry, Project, Stage } from "@/lib/types";
 
 const DRAFT_KEY = "project-draft";
 const STAGES = ["lead", "qualification", "proposal", "negotiation", "won", "lost"] as const;
@@ -105,6 +105,15 @@ function fromProject(p?: Project, defaultManager?: number): FormValues {
   };
 }
 
+function financialRowsFromProject(project?: Project): FinancialEntry[] {
+  return (project?.financial_entries ?? []).map((entry) => ({
+    ...entry,
+    status_id: entry.status?.id,
+    article_id: entry.article?.id,
+    cost_type_id: entry.cost_type?.id,
+  }));
+}
+
 function loadDraft(): FormValues | null {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
@@ -143,6 +152,8 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const [nameTaken, setNameTaken] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(() => financialRowsFromProject(project));
+  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialRowsFromProject(project));
 
   const { register, control, handleSubmit, reset, setValue, setError, trigger, getValues, watch, formState } =
     useForm<FormValues>({
@@ -209,6 +220,13 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const submit = handleSubmit(async (v) => {
     setFormError(null);
     if (nameTaken) return;
+    const invalidEntry = financialEntries.find((entry) =>
+      !entry.amount.trim() || !Number.isFinite(Number(entry.amount)) || Number(entry.amount) < 0 ||
+      !entry.status_id || !Number.isInteger(Number(entry.year)) || Number(entry.year) < 1900 || Number(entry.year) > 2200 ||
+      !Number.isInteger(Number(entry.month)) || Number(entry.month) < 1 || Number(entry.month) > 12 ||
+      (entry.kind === "cost" && (!entry.article_id || !entry.cost_type_id)),
+    );
+    if (invalidEntry) return setFormError("Заполните сумму и все справочные поля финансовых строк");
     const body = {
       name: v.name.trim(),
       description: v.description,
@@ -240,6 +258,12 @@ function ProjectFormInner({ project }: { project?: Project }) {
       const saved = project
         ? await put<Project>(`/projects/${project.id}`, body)
         : await post<Project>("/projects", body);
+      await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
+        kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
+        vat_included: entry.vat_included, status_id: Number(entry.status_id),
+        article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
+        cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
+      })));
       await queryClient.invalidateQueries();
       if (isNew) {
         submittedRef.current = true;
@@ -573,6 +597,42 @@ function ProjectFormInner({ project }: { project?: Project }) {
         </div>
       </fieldset>
 
+      <fieldset className="fieldset" disabled={readOnly}>
+        <legend>Помесячная выручка и затраты</legend>
+        <p className="hint">Сумма вводится в тыс. ₽. Выберите, включает ли сумма НДС; налог автоматически не пересчитывается.</p>
+        {financialEntries.map((entry, index) => {
+          const set = (patch: Partial<FinancialEntry>) => setFinancialEntries((items) => items.map((item, i) => i === index ? { ...item, ...patch } : item));
+          return <div className="row2" key={entry.id ?? `entry-${index}`} style={{ marginBottom: 10 }}>
+            <select className="select" value={entry.kind} onChange={(e) => set({ kind: e.target.value as FinancialEntry["kind"], status_id: undefined, article_id: undefined, cost_type_id: undefined })}>
+              <option value="revenue">Выручка</option><option value="cost">Затраты</option>
+            </select>
+            <input className="input" type="number" min="1900" max="2200" value={entry.year} aria-label="Год" onChange={(e) => set({ year: Number(e.target.value) })} />
+            <select className="select" value={entry.month} aria-label="Месяц" onChange={(e) => set({ month: Number(e.target.value) })}>
+              {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Intl.DateTimeFormat("ru", { month: "long" }).format(new Date(2020, i, 1))}</option>)}
+            </select>
+            <input className="input" type="number" min="0" step="0.001" value={entry.amount} placeholder="тыс. ₽" aria-label="Сумма, тыс. рублей" onChange={(e) => set({ amount: e.target.value })} />
+            <select className="select" value={entry.vat_included ? "yes" : "no"} aria-label="НДС" onChange={(e) => set({ vat_included: e.target.value === "yes" })}>
+              <option value="yes">С НДС</option><option value="no">Без НДС</option>
+            </select>
+            {entry.kind === "revenue" ? <select className="select" value={entry.status_id ?? ""} aria-label="Статус начисления выручки" onChange={(e) => set({ status_id: Number(e.target.value) })}>
+              <option value="">Статус выручки</option>{refs?.revenue_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select> : <>
+              <select className="select" value={entry.article_id ?? ""} aria-label="Статья затрат" onChange={(e) => set({ article_id: Number(e.target.value) })}>
+                <option value="">Статья затрат</option>{refs?.cost_articles.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+              <select className="select" value={entry.cost_type_id ?? ""} aria-label="Вид затрат" onChange={(e) => set({ cost_type_id: Number(e.target.value) })}>
+                <option value="">Вид затрат</option>{refs?.cost_types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+              <select className="select" value={entry.status_id ?? ""} aria-label="Статус затрат" onChange={(e) => set({ status_id: Number(e.target.value) })}>
+                <option value="">Статус затрат</option>{refs?.cost_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+            </>}
+            <button type="button" className="btn" onClick={() => setFinancialEntries((items) => items.filter((_, i) => i !== index))}>Удалить</button>
+          </div>;
+        })}
+        <button type="button" className="btn" onClick={() => setFinancialEntries((items) => [...items, { kind: "revenue", year: new Date().getFullYear(), month: new Date().getMonth() + 1, amount: "", vat_included: true }])}>Добавить финансовую строку</button>
+      </fieldset>
+
       <div className="form-footer">
         {formError && <span className="alert">{formError}</span>}
         {!formError && errorCount > 0 && (
@@ -587,7 +647,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
           К списку
         </button>
         {!readOnly && (
-          <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !isDirty)}>
+          <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !isDirty && !financialDirty)}>
             {isSubmitting ? "Сохраняем…" : isNew ? "Создать проект" : "Сохранить"}
           </button>
         )}
