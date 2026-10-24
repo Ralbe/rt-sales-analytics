@@ -92,7 +92,9 @@ export interface FinancialEntry {
   status_id?: number;
   article_id?: number;
   cost_type_id?: number;
-  reference?: RefItem;
+  status?: RefItem;
+  article?: RefItem | null;
+  cost_type?: RefItem | null;
 }
 
 export interface ProjectPage {
