@@ -7,12 +7,12 @@ from app.core.security import ACCESS_COOKIE, SCOPE_ACCESS, decode_token
 from app.db import get_db
 from app.models import Role, User
 
-# Кто может создавать и редактировать проекты
-PROJECT_EDITORS = {Role.manager, Role.head, Role.admin}
-# Кто видит все проекты (менеджер — только свои)
-SEES_ALL_PROJECTS = {Role.analyst, Role.head, Role.admin}
-# Кто может публиковать дашборды для всех
-DASHBOARD_PUBLISHERS = {Role.analyst, Role.head, Role.admin}
+# Проекты могут редактировать все роли, но пользователи ограничены своими проектами.
+PROJECT_EDITORS = {Role.user, Role.analyst, Role.admin}
+SEES_ALL_PROJECTS = {Role.analyst, Role.admin}
+# Настройка и публикация дашбордов доступны аналитику и администратору.
+DASHBOARD_EDITORS = {Role.analyst, Role.admin}
+DASHBOARD_PUBLISHERS = DASHBOARD_EDITORS
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -34,5 +34,5 @@ def require_roles(*roles: Role) -> Callable[[User], User]:
 
 
 def manager_scope(user: User) -> int | None:
-    """Ограничение выборки: id менеджера или None, если пользователь видит всё."""
+    """Возвращает владельца проектной выборки для ограниченной роли."""
     return None if user.role in SEES_ALL_PROJECTS else user.id

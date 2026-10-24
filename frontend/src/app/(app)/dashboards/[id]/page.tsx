@@ -10,7 +10,7 @@ import { WidgetDialog } from "@/components/dashboard/WidgetDialog";
 import { newWidget } from "@/components/dashboard/catalog";
 import { MultiSelect } from "@/components/MultiSelect";
 import { ApiError, api, del, post, put } from "@/lib/api";
-import { canPublishDashboards, seesAllProjects, useMe, useRefs } from "@/lib/hooks";
+import { canConfigureDashboards, canPublishDashboards, seesAllProjects, useMe, useRefs } from "@/lib/hooks";
 import type { Dashboard, DashboardFilters, Widget } from "@/lib/types";
 
 // Сетка рассчитана так, чтобы 12 строк занимали ровно видимую высоту экрана
@@ -193,11 +193,11 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
               🗑
             </button>
           </>
-        ) : (
+        ) : canConfigureDashboards(me?.role) ? (
           <button className="btn small" onClick={copy}>
             Сделать копию для себя
           </button>
-        )}
+        ) : null}
       </div>
 
       <div className="page-body" style={{ padding: "0 10px 0" }}>
