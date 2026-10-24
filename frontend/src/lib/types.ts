@@ -18,11 +18,19 @@ export interface ManagerItem {
   full_name: string;
 }
 
+export interface ServiceItem extends RefItem {
+  group_name: string | null;
+}
+
 export interface Refs {
   segments: RefItem[];
-  services: RefItem[];
+  services: ServiceItem[];
   managers: ManagerItem[];
   stages: { id: Stage; name: string; probability: number }[];
+  payment_types: RefItem[];
+  assessment_statuses: RefItem[];
+  project_indicators: RefItem[];
+  customer_stages: { id: number; name: string; probability: number }[];
   roles: { id: Role; name: string }[];
 }
 
@@ -40,7 +48,7 @@ export interface Project {
   client: RefItem;
   segment: RefItem;
   manager: ManagerItem;
-  service: RefItem;
+  service: ServiceItem;
   stage: Stage;
   amount: string;
   cost: string;
@@ -50,6 +58,21 @@ export interface Project {
   start_date: string;
   expected_close_date: string;
   closed_at: string | null;
+  payment_type: RefItem | null;
+  customer_stage: RefItem | null;
+  indicator: RefItem | null;
+  accepted_for_forecast: boolean;
+  assessment_status: RefItem | null;
+  subsidiary_implementation: boolean;
+  management_control: boolean;
+  is_industry_solution: boolean;
+  industry_manager: string | null;
+  industry_project_number: string | null;
+  implementation_year: number | null;
+  project_status: string | null;
+  realized_work: string;
+  period_plan: string;
+  created_at: string;
   updated_at: string;
 }
 
