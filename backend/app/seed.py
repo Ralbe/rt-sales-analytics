@@ -12,7 +12,18 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db import SessionLocal
-from app.models import STAGE_DEFAULT_PROBABILITY, Client, Project, Role, Segment, Service, Stage, User
+from app.models import (
+    STAGE_DEFAULT_PROBABILITY,
+    Client,
+    Project,
+    ReferenceValue,
+    Role,
+    Segment,
+    Service,
+    Stage,
+    User,
+)
+from app.reference_data import REFERENCE_DATA, SPEC_SEGMENTS, SPEC_SERVICES
 
 DEMO_PASSWORD = "Demo2026!"
 
@@ -66,9 +77,47 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
     rng = random.Random(42)
     today = today or date.today()
 
-    segments = [Segment(name=n) for n in SEGMENTS]
-    services = {name: Service(name=name) for name in SERVICES}
-    db.add_all(segments + list(services.values()))
+    # 1. Безопасное добавление Сегментов
+    existing_segments = set(db.scalars(select(Segment.name)).all())
+    segments = [
+        Segment(name=n) 
+        for n in dict.fromkeys(SEGMENTS + SPEC_SEGMENTS) 
+        if n not in existing_segments
+    ]
+
+    # 2. Безопасное добавление Услуг
+    existing_services = set(db.scalars(select(Service.name)).all())
+    services = {
+        name: Service(name=name, group_name=SPEC_SERVICES.get(name))
+        for name in dict.fromkeys(list(SERVICES) + list(SPEC_SERVICES))
+        if name not in existing_services
+    }
+
+    # 3. Безопасное добавление Справочных значений (Защита от UniqueViolation)
+    existing_refs = set(db.execute(select(ReferenceValue.category, ReferenceValue.code)).all())
+    
+    references = []
+    for category, items in REFERENCE_DATA.items():
+        for code, name, position, probability in items:
+            # Проверяем пару (category, code) на уникальность перед добавлением
+            if (category, code) not in existing_refs:
+                references.append(
+                    ReferenceValue(
+                        category=category, 
+                        code=code, 
+                        name=name, 
+                        position=position, 
+                        probability=probability
+                    )
+                )
+
+    # Сохраняем только уникальные или новые объекты
+    db.add_all(segments + list(services.values()) + references)
+
+    # Пересоздаем словарь услуг из БД для корректной привязки ID к проектам ниже
+    all_services = {s.name: s for s in db.scalars(select(Service)).all()}
+    # Пересоздаем список сегментов для корректной привязки ID к клиентам
+    all_segments = db.scalars(select(Segment)).all()
 
     password_hash = hash_password(DEMO_PASSWORD)
     users = [User(email=e, full_name=n, role=r, password_hash=password_hash) for e, n, r in USERS]
@@ -84,7 +133,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
             inn = generate_inn(rng)
         inns.add(inn)
         prefix = "ГБУ" if "больница" in root or "Школа" in root else NAME_PREFIX[i % 3]
-        clients.append(Client(name=f"{prefix} «{root}»", inn=inn, segment=segments[i % len(segments)]))
+        clients.append(Client(name=f"{prefix} «{root}»", inn=inn, segment=all_segments[i % len(all_segments)]))
     db.add_all(clients)
     db.flush()
 
@@ -123,7 +172,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
             description=f"{base} для клиента {client.name}.",
             client_id=client.id,
             manager_id=rng.choice(managers).id,
-            service_id=services[service_name].id,
+            service_id=all_services[service_name].id,
             stage=stage,
             amount=amount,
             cost=cost,
