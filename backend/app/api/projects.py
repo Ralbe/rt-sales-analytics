@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core import cache
 from app.db import get_db
 from app.deps import PROJECT_EDITORS, get_current_user, manager_scope, require_roles
-from app.models import CLOSED_STAGES, STAGE_LABELS, Client, Project, Role, Service, Stage, User
+from app.models import CLOSED_STAGES, STAGE_LABELS, Client, Project, ReferenceValue, Role, Service, Stage, User
 from app.schemas import NameCheckOut, ProjectIn, ProjectOut, ProjectPage
 from app.services import audit
 
@@ -48,6 +49,21 @@ def to_out(p: Project) -> dict:
         "start_date": p.start_date,
         "expected_close_date": p.expected_close_date,
         "closed_at": p.closed_at,
+        "payment_type": p.payment_type,
+        "customer_stage": p.customer_stage,
+        "indicator": p.indicator,
+        "accepted_for_forecast": p.accepted_for_forecast,
+        "assessment_status": p.assessment_status,
+        "subsidiary_implementation": p.subsidiary_implementation,
+        "management_control": p.management_control,
+        "is_industry_solution": p.is_industry_solution,
+        "industry_manager": p.industry_manager,
+        "industry_project_number": p.industry_project_number,
+        "implementation_year": p.implementation_year,
+        "project_status": p.project_status,
+        "realized_work": p.realized_work,
+        "period_plan": p.period_plan,
+        "created_at": p.created_at,
         "updated_at": p.updated_at,
     }
 
@@ -142,6 +158,10 @@ def export_projects(
     headers = [
         "ID", "Проект", "Клиент", "ИНН", "Сегмент", "Услуга", "Ответственный", "Стадия",
         "Сумма, ₽", "Себестоимость, ₽", "Маржа, ₽", "Вероятность, %", "Начало", "План закрытия", "Закрыт",
+        "Тип платежа", "Этап по ТЗ", "Индикатор", "Принимаемый к прогнозу", "Принимаемый к оценке",
+        "Реализация через ДЗО", "Контроль руководства", "Отраслевое решение", "Отраслевой менеджер",
+        "Номер отраслевого проекта", "Год реализации", "Статус проекта", "Сделано за период", "Планы на период",
+        "Создан",
     ]
     ws.append(headers)
     for cell in ws[1]:
@@ -151,10 +171,25 @@ def export_projects(
             p.id, p.name, p.client.name, p.client.inn, p.client.segment.name, p.service.name, p.manager.full_name,
             STAGE_LABELS[p.stage], float(p.amount), float(p.cost), float(p.amount - p.cost), p.probability,
             p.start_date, p.expected_close_date, p.closed_at,
+            p.payment_type.name if p.payment_type else None,
+            p.customer_stage.name if p.customer_stage else None,
+            p.indicator.name if p.indicator else None,
+            p.accepted_for_forecast,
+            p.assessment_status.name if p.assessment_status else None,
+            p.subsidiary_implementation,
+            p.management_control,
+            p.is_industry_solution,
+            p.industry_manager,
+            p.industry_project_number,
+            p.implementation_year,
+            p.project_status,
+            p.realized_work,
+            p.period_plan,
+            p.created_at,
         ])
-    widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12]
-    for column, width in zip("ABCDEFGHIJKLMNO", widths, strict=True):
-        ws.column_dimensions[column].width = width
+    widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(headers) - 15)
+    for index, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(index)].width = width
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -194,6 +229,22 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
     if db.get(Service, data.service_id) is None:
         raise HTTPException(422, {"field": "service_id", "message": "Услуга не найдена"})
 
+    expected_categories = {
+        "payment_type_id": "payment_type",
+        "customer_stage_id": "customer_stage",
+        "indicator_id": "project_indicator",
+        "assessment_status_id": "assessment_status",
+    }
+    references: dict[str, ReferenceValue] = {}
+    for field, category in expected_categories.items():
+        reference_id = getattr(data, field)
+        if reference_id is None:
+            continue
+        reference = db.get(ReferenceValue, reference_id)
+        if reference is None or not reference.is_active or reference.category != category:
+            raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
+        references[field] = reference
+
     if user.role == Role.user:
         manager_id = user.id
     else:
@@ -210,6 +261,11 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
     was_closed = project.stage in CLOSED_STAGES if project.stage else False
     for field, value in data.model_dump(exclude={"manager_id"}).items():
         setattr(project, field, value)
+    customer_stage = references.get("customer_stage_id")
+    if customer_stage is not None:
+        if customer_stage.probability is None:
+            raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
+        project.probability = customer_stage.probability
     project.manager_id = manager_id
     if data.stage in CLOSED_STAGES:
         if not was_closed or project.closed_at is None:

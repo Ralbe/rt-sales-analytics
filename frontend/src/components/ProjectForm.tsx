@@ -37,6 +37,25 @@ const schema = z
     service_id: z.string().min(1, "Выберите услугу"),
     manager_id: z.string().min(1, "Выберите ответственного"),
     stage: z.enum(STAGES, { errorMap: () => ({ message: "Выберите стадию" }) }),
+    customer_stage_id: z.string(),
+    payment_type_id: z.string(),
+    indicator_id: z.string(),
+    accepted_for_forecast: z.boolean(),
+    assessment_status_id: z.string(),
+    subsidiary_implementation: z.boolean(),
+    management_control: z.boolean(),
+    is_industry_solution: z.boolean(),
+    industry_manager: z.string().max(200, "Не длиннее 200 символов"),
+    industry_project_number: z.string().max(100, "Не длиннее 100 символов"),
+    implementation_year: z
+      .string()
+      .refine(
+        (v) => v === "" || (/^\d{4}$/.test(v) && Number(v) >= 1900 && Number(v) <= 2200),
+        "Введите год от 1900 до 2200",
+      ),
+    project_status: z.string().max(100, "Не длиннее 100 символов"),
+    realized_work: z.string().max(5000, "Не длиннее 5000 символов"),
+    period_plan: z.string().max(5000, "Не длиннее 5000 символов"),
     probability: z
       .string()
       .refine((v) => /^\d{1,3}$/.test(v.trim()) && Number(v) <= 100, "Целое число от 0 до 100"),
@@ -63,6 +82,20 @@ function fromProject(p?: Project, defaultManager?: number): FormValues {
     service_id: p ? String(p.service.id) : "",
     manager_id: p ? String(p.manager.id) : defaultManager ? String(defaultManager) : "",
     stage: p?.stage ?? "lead",
+    customer_stage_id: p?.customer_stage ? String(p.customer_stage.id) : "",
+    payment_type_id: p?.payment_type ? String(p.payment_type.id) : "",
+    indicator_id: p?.indicator ? String(p.indicator.id) : "",
+    accepted_for_forecast: p?.accepted_for_forecast ?? false,
+    assessment_status_id: p?.assessment_status ? String(p.assessment_status.id) : "",
+    subsidiary_implementation: p?.subsidiary_implementation ?? false,
+    management_control: p?.management_control ?? false,
+    is_industry_solution: p?.is_industry_solution ?? false,
+    industry_manager: p?.industry_manager ?? "",
+    industry_project_number: p?.industry_project_number ?? "",
+    implementation_year: p?.implementation_year ? String(p.implementation_year) : "",
+    project_status: p?.project_status ?? "",
+    realized_work: p?.realized_work ?? "",
+    period_plan: p?.period_plan ?? "",
     probability: String(p?.probability ?? 10),
     amount: p ? String(Number(p.amount)) : "",
     cost: p ? String(Number(p.cost)) : "",
@@ -163,8 +196,14 @@ function ProjectFormInner({ project }: { project?: Project }) {
 
   const onStageChange = (stage: Stage) => {
     // Вероятность подставляется автоматически, пока пользователь не ввёл её сам
+    if (getValues("customer_stage_id")) return;
     const def = refs?.stages.find((s) => s.id === stage)?.probability;
     if (def !== undefined && !dirtyFields.probability) setValue("probability", String(def), { shouldValidate: true });
+  };
+
+  const onCustomerStageChange = (stageId: string) => {
+    const stage = refs?.customer_stages.find((item) => String(item.id) === stageId);
+    if (stage) setValue("probability", String(stage.probability), { shouldValidate: true });
   };
 
   const submit = handleSubmit(async (v) => {
@@ -182,6 +221,20 @@ function ProjectFormInner({ project }: { project?: Project }) {
       cost: (v.cost.trim() ? toNumber(v.cost) : 0).toFixed(2),
       start_date: v.start_date,
       expected_close_date: v.expected_close_date,
+      payment_type_id: v.payment_type_id ? Number(v.payment_type_id) : null,
+      customer_stage_id: v.customer_stage_id ? Number(v.customer_stage_id) : null,
+      indicator_id: v.indicator_id ? Number(v.indicator_id) : null,
+      accepted_for_forecast: v.accepted_for_forecast,
+      assessment_status_id: v.accepted_for_forecast && v.assessment_status_id ? Number(v.assessment_status_id) : null,
+      subsidiary_implementation: v.subsidiary_implementation,
+      management_control: v.management_control,
+      is_industry_solution: v.is_industry_solution,
+      industry_manager: v.is_industry_solution ? v.industry_manager.trim() || null : null,
+      industry_project_number: v.is_industry_solution ? v.industry_project_number.trim() || null : null,
+      implementation_year: v.implementation_year ? Number(v.implementation_year) : null,
+      project_status: v.project_status.trim() || null,
+      realized_work: v.realized_work,
+      period_plan: v.period_plan,
     };
     try {
       const saved = project
@@ -273,7 +326,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
                   <option value="">— выберите —</option>
                   {refs?.services.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name}
+                      {s.group_name ? `${s.group_name} — ${s.name}` : s.name}
                     </option>
                   ))}
                 </select>
@@ -305,12 +358,127 @@ function ProjectFormInner({ project }: { project?: Project }) {
               <textarea id="description" className="textarea" rows={4} {...register("description")} />
               <div className="error">{err("description")}</div>
             </div>
+
+            <div className="row2">
+              <div className={cls("payment_type_id")}>
+                <label htmlFor="payment_type_id">Тип платежа</label>
+                <select id="payment_type_id" className="select" {...register("payment_type_id")}>
+                  <option value="">— не указан —</option>
+                  {refs?.payment_types.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
+                <div className="error">{err("payment_type_id")}</div>
+              </div>
+              <div className={cls("indicator_id")}>
+                <label htmlFor="indicator_id">Индикатор проекта</label>
+                <select id="indicator_id" className="select" {...register("indicator_id")}>
+                  <option value="">— не указан —</option>
+                  {refs?.project_indicators.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
+                <div className="error">{err("indicator_id")}</div>
+              </div>
+            </div>
+
+            <div className="row2">
+              <div className={cls("customer_stage_id")}>
+                <label htmlFor="customer_stage_id">Этап по ТЗ</label>
+                <select
+                  id="customer_stage_id"
+                  className="select"
+                  {...register("customer_stage_id", { onChange: (e) => onCustomerStageChange(e.target.value) })}
+                >
+                  <option value="">— не указан —</option>
+                  {refs?.customer_stages.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name} ({item.probability}%)</option>
+                  ))}
+                </select>
+                <div className="hint">Старая стадия сохранена отдельно для совместимости.</div>
+              </div>
+              <div className={cls("implementation_year")}>
+                <label htmlFor="implementation_year">Год реализации</label>
+                <input
+                  id="implementation_year"
+                  className="input"
+                  inputMode="numeric"
+                  {...register("implementation_year")}
+                />
+                <div className="error">{err("implementation_year")}</div>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 8, padding: "4px 0" }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" {...register("accepted_for_forecast")} />
+                Принимаемый к прогнозу
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" {...register("subsidiary_implementation")} />
+                Реализация через ДЗО
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" {...register("management_control")} />
+                Контроль руководства
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" {...register("is_industry_solution")} />
+                Отраслевое решение
+              </label>
+            </div>
+
+            {values.accepted_for_forecast && (
+              <div className={cls("assessment_status_id")}>
+                <label htmlFor="assessment_status_id">Принимаемый к оценке</label>
+                <select id="assessment_status_id" className="select" {...register("assessment_status_id")}>
+                  <option value="">— не указан —</option>
+                  {refs?.assessment_statuses.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="error">{err("assessment_status_id")}</div>
+              </div>
+            )}
+
+            {values.is_industry_solution && (
+              <div className="row2">
+                <div className={cls("industry_manager")}>
+                  <label htmlFor="industry_manager">Отраслевой менеджер</label>
+                  <input id="industry_manager" className="input" {...register("industry_manager")} />
+                  <div className="error">{err("industry_manager")}</div>
+                </div>
+                <div className={cls("industry_project_number")}>
+                  <label htmlFor="industry_project_number">Номер отраслевого проекта</label>
+                  <input id="industry_project_number" className="input" {...register("industry_project_number")} />
+                  <div className="error">{err("industry_project_number")}</div>
+                </div>
+              </div>
+            )}
+
+            <div className={cls("project_status")}>
+              <label htmlFor="project_status">Статус проекта</label>
+              <input id="project_status" className="input" {...register("project_status")} />
+              <div className="error">{err("project_status")}</div>
+            </div>
+            <div className={cls("realized_work")}>
+              <label htmlFor="realized_work">Сделано за период</label>
+              <textarea id="realized_work" className="textarea" rows={3} {...register("realized_work")} />
+              <div className="error">{err("realized_work")}</div>
+            </div>
+            <div className={cls("period_plan")}>
+              <label htmlFor="period_plan">Планы на период</label>
+              <textarea id="period_plan" className="textarea" rows={3} {...register("period_plan")} />
+              <div className="error">{err("period_plan")}</div>
+            </div>
           </div>
 
           <div className="col">
             <div className="row2">
               <div className={cls("stage")}>
-                <label htmlFor="stage">Стадия {req}</label>
+                <label htmlFor="stage">Стадия системы (совместимость) {req}</label>
                 <select
                   id="stage"
                   className="select"
@@ -326,8 +494,16 @@ function ProjectFormInner({ project }: { project?: Project }) {
               </div>
               <div className={cls("probability")}>
                 <label htmlFor="probability">Вероятность, % {req}</label>
-                <input id="probability" className="input" inputMode="numeric" {...register("probability")} />
-                <div className="error">{err("probability")}</div>
+                <input
+                  id="probability"
+                  className="input"
+                  inputMode="numeric"
+                  readOnly={Boolean(values.customer_stage_id)}
+                  {...register("probability")}
+                />
+                <div className={values.customer_stage_id ? "hint" : "error"}>
+                  {values.customer_stage_id ? "Определяется выбранным этапом по ТЗ" : err("probability")}
+                </div>
               </div>
             </div>
 

@@ -1,5 +1,7 @@
 import random
+from io import BytesIO
 
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from app.models import Client, Project, Service, User
@@ -74,6 +76,11 @@ def test_export_xlsx(as_analyst):
     r = as_analyst.get("/api/projects/export.xlsx", params={"open_only": True})
     assert r.status_code == 200
     assert r.content[:2] == b"PK"
+    workbook = load_workbook(BytesIO(r.content), read_only=True)
+    headers = next(workbook.active.iter_rows(min_row=1, max_row=1, values_only=True))
+    assert "Этап по ТЗ" in headers
+    assert "Тип платежа" in headers
+    assert "Планы на период" in headers
 
 
 def test_client_autocomplete_and_inn_validation(as_user, db):
@@ -102,3 +109,78 @@ def test_user_cannot_export_all_projects(as_user):
 def test_role_reference_matches_spec(as_user):
     roles = as_user.get("/api/refs").json()["roles"]
     assert {role["id"] for role in roles} == {"admin", "analyst", "user"}
+
+
+def test_customer_spec_references_and_project_fields(as_user, db):
+    refs = as_user.get("/api/refs").json()
+    assert [item["probability"] for item in refs["customer_stages"]] == [10, 10, 30, 40, 40, 50, 70, 80, 90, 100]
+    assert {item["name"] for item in refs["payment_types"]} == {
+        "Инсталляции", "Сервисная", "Оборудование", "Разовые", "Интеграционные проекты",
+    }
+    assert "Снят" in {item["name"] for item in refs["project_indicators"]}
+
+    selected_stage = next(item for item in refs["customer_stages"] if item["probability"] == 30)
+    payment_type = refs["payment_types"][0]
+    indicator = next(item for item in refs["project_indicators"] if item["name"] == "Снят")
+    assessment = refs["assessment_statuses"][0]
+    payload = _payload(
+        db,
+        name="Проект по требованиям заказчика",
+        probability=88,
+        customer_stage_id=selected_stage["id"],
+        payment_type_id=payment_type["id"],
+        indicator_id=indicator["id"],
+        accepted_for_forecast=True,
+        assessment_status_id=assessment["id"],
+        subsidiary_implementation=True,
+        management_control=True,
+        is_industry_solution=True,
+        industry_manager="Иван Петров",
+        industry_project_number="IND-42",
+        implementation_year=2027,
+        project_status="В работе",
+        realized_work="Завершено обследование",
+        period_plan="Подготовить проект решения",
+    )
+
+    response = as_user.post("/api/projects", json=payload)
+    assert response.status_code == 201, response.text
+    project = response.json()
+    assert project["customer_stage"]["id"] == selected_stage["id"]
+    assert project["probability"] == selected_stage["probability"]
+    assert project["stage"] == "proposal"
+    assert project["payment_type"]["id"] == payment_type["id"]
+    assert project["indicator"]["name"] == "Снят"
+    assert project["assessment_status"]["id"] == assessment["id"]
+    assert project["industry_project_number"] == "IND-42"
+    assert project["implementation_year"] == 2027
+    assert project["realized_work"] == "Завершено обследование"
+    assert project["period_plan"] == "Подготовить проект решения"
+    assert project["created_at"]
+
+
+def test_project_conditional_fields_require_parent_flags(as_user, db):
+    response = as_user.post(
+        "/api/projects",
+        json=_payload(db, assessment_status_id=1, industry_manager="Иван Петров"),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body"]
+
+    response = as_user.post(
+        "/api/projects",
+        json=_payload(db, industry_manager="Иван Петров"),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body"]
+
+
+def test_project_reference_id_must_match_expected_catalog(as_user, db):
+    refs = as_user.get("/api/refs").json()
+    payment_type_id = refs["payment_types"][0]["id"]
+    response = as_user.post(
+        "/api/projects",
+        json=_payload(db, customer_stage_id=payment_type_id),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["field"] == "customer_stage_id"

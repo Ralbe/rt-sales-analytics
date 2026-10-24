@@ -12,7 +12,18 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db import SessionLocal
-from app.models import STAGE_DEFAULT_PROBABILITY, Client, Project, Role, Segment, Service, Stage, User
+from app.models import (
+    STAGE_DEFAULT_PROBABILITY,
+    Client,
+    Project,
+    ReferenceValue,
+    Role,
+    Segment,
+    Service,
+    Stage,
+    User,
+)
+from app.reference_data import REFERENCE_DATA, SPEC_SEGMENTS, SPEC_SERVICES
 
 DEMO_PASSWORD = "Demo2026!"
 
@@ -66,9 +77,17 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
     rng = random.Random(42)
     today = today or date.today()
 
-    segments = [Segment(name=n) for n in SEGMENTS]
-    services = {name: Service(name=name) for name in SERVICES}
-    db.add_all(segments + list(services.values()))
+    segments = [Segment(name=n) for n in dict.fromkeys(SEGMENTS + SPEC_SEGMENTS)]
+    services = {
+        name: Service(name=name, group_name=SPEC_SERVICES.get(name))
+        for name in dict.fromkeys(list(SERVICES) + list(SPEC_SERVICES))
+    }
+    references = [
+        ReferenceValue(category=category, code=code, name=name, position=position, probability=probability)
+        for category, items in REFERENCE_DATA.items()
+        for code, name, position, probability in items
+    ]
+    db.add_all(segments + list(services.values()) + references)
 
     password_hash = hash_password(DEMO_PASSWORD)
     users = [User(email=e, full_name=n, role=r, password_hash=password_hash) for e, n, r in USERS]
