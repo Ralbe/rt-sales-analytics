@@ -133,7 +133,7 @@ def check_name(
 def export_projects(
     params: ListParams = Depends(),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles(Role.analyst, Role.admin)),
 ) -> StreamingResponse:
     projects = db.scalars(params.query(user).limit(EXPORT_LIMIT)).unique().all()
     wb = Workbook()
@@ -194,12 +194,12 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
     if db.get(Service, data.service_id) is None:
         raise HTTPException(422, {"field": "service_id", "message": "Услуга не найдена"})
 
-    if user.role == Role.manager:
+    if user.role == Role.user:
         manager_id = user.id
     else:
         manager_id = data.manager_id or user.id
         manager = db.get(User, manager_id)
-        if manager is None or manager.role not in (Role.manager, Role.head):
+        if manager is None or not manager.is_active:
             raise HTTPException(422, {"field": "manager_id", "message": "Ответственный не найден"})
 
     if _find_duplicate(db, data.name, data.client_id, project.id):

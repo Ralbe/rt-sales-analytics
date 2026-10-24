@@ -103,7 +103,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const { data: me } = useMe();
   const { data: refs } = useRefs();
   const isNew = !project;
-  const isManager = me?.role === "manager";
+  const isUser = me?.role === "user";
   const readOnly = !canEditProjects(me?.role);
 
   const [formError, setFormError] = useState<string | null>(null);
@@ -281,8 +281,8 @@ function ProjectFormInner({ project }: { project?: Project }) {
               </div>
               <div className={cls("manager_id")}>
                 <label htmlFor="manager_id">Ответственный {req}</label>
-                {isManager ? (
-                  // Менеджер не выбирает ответственного — значение берётся из defaultValues
+                {isUser ? (
+                  // Пользователь ведёт только свои проекты.
                   <input id="manager_id" className="input" readOnly value={project?.manager.full_name ?? me?.full_name ?? ""} />
                 ) : (
                   <select id="manager_id" className="select" {...register("manager_id")}>
@@ -294,8 +294,8 @@ function ProjectFormInner({ project }: { project?: Project }) {
                     ))}
                   </select>
                 )}
-                <div className={isManager ? "hint" : "error"}>
-                  {isManager ? "Менеджер ведёт свои проекты" : err("manager_id")}
+                <div className={isUser ? "hint" : "error"}>
+                  {isUser ? "Пользователь ведёт свои проекты" : err("manager_id")}
                 </div>
               </div>
             </div>

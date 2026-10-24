@@ -1,4 +1,4 @@
-export type Role = "analyst" | "manager" | "head" | "admin";
+export type Role = "analyst" | "user" | "admin";
 export type Stage = "lead" | "qualification" | "proposal" | "negotiation" | "won" | "lost";
 
 export interface User {

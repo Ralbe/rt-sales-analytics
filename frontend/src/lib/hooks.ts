@@ -23,13 +23,13 @@ export function useDebounced<T>(value: T, delay = 300): T {
   return debounced;
 }
 
-export const canEditProjects = (role?: Role) => role === "manager" || role === "head" || role === "admin";
-export const seesAllProjects = (role?: Role) => role === "analyst" || role === "head" || role === "admin";
-export const canPublishDashboards = seesAllProjects;
+export const canEditProjects = (role?: Role) => role === "user" || role === "analyst" || role === "admin";
+export const seesAllProjects = (role?: Role) => role === "analyst" || role === "admin";
+export const canConfigureDashboards = seesAllProjects;
+export const canPublishDashboards = canConfigureDashboards;
 
 export const ROLE_LABELS: Record<Role, string> = {
   analyst: "Аналитик",
-  manager: "Менеджер",
-  head: "Руководитель",
+  user: "Пользователь",
   admin: "Администратор",
 };

@@ -77,6 +77,6 @@ def as_analyst(client, db) -> TestClient:
 
 
 @pytest.fixture
-def as_manager(client, db) -> TestClient:
+def as_user(client, db) -> TestClient:
     login(client, db, "manager1@example.com")
     return client

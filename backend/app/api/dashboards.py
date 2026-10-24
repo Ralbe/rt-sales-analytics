@@ -3,7 +3,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import DASHBOARD_PUBLISHERS, get_current_user
+from app.deps import DASHBOARD_EDITORS, DASHBOARD_PUBLISHERS, get_current_user, require_roles
 from app.models import Dashboard, User
 from app.schemas import DashboardIn, DashboardOut
 from app.services import audit
@@ -20,7 +20,7 @@ def to_out(d: Dashboard, user: User) -> dict:
         "widgets": d.widgets,
         "filters": d.filters or {},
         "is_shared": d.is_shared,
-        "editable": d.owner_id == user.id,
+        "editable": d.owner_id == user.id and user.role in DASHBOARD_EDITORS,
         "updated_at": d.updated_at,
     }
 
@@ -36,13 +36,14 @@ def _get(db: Session, dashboard_id: int, user: User, *, for_write: bool = False)
 
 def _check_publish(data: DashboardIn, user: User) -> None:
     if data.is_shared and user.role not in DASHBOARD_PUBLISHERS:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Публиковать дашборды могут аналитики и руководители")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Публиковать дашборды могут аналитики и администраторы")
 
 
 @router.get("", response_model=list[DashboardOut])
 def list_dashboards(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
-    """Свои дашборды и опубликованные коллегами. При первом входе создаётся дашборд по умолчанию."""
-    if db.scalar(select(Dashboard.id).where(Dashboard.owner_id == user.id).limit(1)) is None:
+    """Показывает доступные дашборды; аналитикам и администраторам создаёт дашборд по умолчанию."""
+    has_dashboard = db.scalar(select(Dashboard.id).where(Dashboard.owner_id == user.id).limit(1))
+    if user.role in DASHBOARD_EDITORS and has_dashboard is None:
         create_default(db, user)
     items = db.scalars(
         select(Dashboard)
@@ -58,7 +59,11 @@ def get_dashboard(dashboard_id: int, db: Session = Depends(get_db), user: User =
 
 
 @router.post("", response_model=DashboardOut, status_code=status.HTTP_201_CREATED)
-def create_dashboard(data: DashboardIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+def create_dashboard(
+    data: DashboardIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*DASHBOARD_EDITORS)),
+) -> dict:
     _check_publish(data, user)
     d = Dashboard(owner_id=user.id, **data.model_dump())
     db.add(d)
@@ -71,7 +76,10 @@ def create_dashboard(data: DashboardIn, db: Session = Depends(get_db), user: Use
 
 @router.put("/{dashboard_id}", response_model=DashboardOut)
 def update_dashboard(
-    dashboard_id: int, data: DashboardIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    dashboard_id: int,
+    data: DashboardIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*DASHBOARD_EDITORS)),
 ) -> dict:
     d = _get(db, dashboard_id, user, for_write=True)
     _check_publish(data, user)
@@ -83,7 +91,9 @@ def update_dashboard(
 
 
 @router.post("/{dashboard_id}/copy", response_model=DashboardOut, status_code=status.HTTP_201_CREATED)
-def copy_dashboard(dashboard_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+def copy_dashboard(
+    dashboard_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles(*DASHBOARD_EDITORS))
+) -> dict:
     src = _get(db, dashboard_id, user)
     d = Dashboard(owner_id=user.id, name=f"{src.name} (копия)", widgets=src.widgets, filters=src.filters)
     db.add(d)
@@ -93,7 +103,9 @@ def copy_dashboard(dashboard_id: int, db: Session = Depends(get_db), user: User 
 
 
 @router.delete("/{dashboard_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_dashboard(dashboard_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> None:
+def delete_dashboard(
+    dashboard_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles(*DASHBOARD_EDITORS))
+) -> None:
     d = _get(db, dashboard_id, user, for_write=True)
     db.delete(d)
     audit.record(db, user.id, "delete", "dashboard", dashboard_id, name=d.name)
