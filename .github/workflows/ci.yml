@@ -57,6 +57,121 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rt
+          POSTGRES_PASSWORD: rt
+          POSTGRES_DB: rt_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U rt -d rt_e2e" --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Установить зависимости API
+        run: pip install -r backend/requirements-dev.txt
+      - name: Установить зависимости фронтенда
+        working-directory: frontend
+        run: npm ci
+      - name: Установить Chromium для Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Собрать фронтенд для E2E
+        working-directory: frontend
+        run: npm run build
+        env:
+          BACKEND_URL: http://127.0.0.1:8000
+      - name: Подготовить статические файлы standalone-сервера
+        working-directory: frontend
+        run: cp -R .next/static .next/standalone/.next/static
+      - name: Подготовить изолированную базу и пользователя E2E
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://rt:rt@localhost:5432/rt_e2e
+          REDIS_URL: ""
+        run: |
+          alembic upgrade head
+          python - <<'PY'
+          import os
+          import secrets
+
+          from app.core.security import hash_password, new_totp_secret
+          from app.db import SessionLocal
+          from app.models import Role, User
+
+          with SessionLocal() as db:
+              from app.seed import seed
+              seed(db, projects_count=0)
+
+              email = "e2e@example.test"
+              password = secrets.token_urlsafe(32)
+              totp_secret = new_totp_secret()
+              secret_key = secrets.token_urlsafe(48)
+              db.add(User(
+                  email=email,
+                  full_name="Пользователь E2E",
+                  role=Role.analyst,
+                  password_hash=hash_password(password),
+                  totp_secret=totp_secret,
+                  totp_enabled=True,
+              ))
+              db.commit()
+
+          print(f"::add-mask::{password}")
+          print(f"::add-mask::{totp_secret}")
+          print(f"::add-mask::{secret_key}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"E2E_EMAIL={email}\n")
+              env.write(f"E2E_PASSWORD={password}\n")
+              env.write(f"E2E_TOTP_SECRET={totp_secret}\n")
+              env.write(f"SECRET_KEY={secret_key}\n")
+          PY
+      - name: Запустить сквозной сценарий
+        working-directory: frontend
+        env:
+          DATABASE_URL: postgresql+psycopg://rt:rt@localhost:5432/rt_e2e
+          REDIS_URL: ""
+          COOKIE_SECURE: "false"
+          BACKEND_URL: http://127.0.0.1:8000
+        run: |
+          python -m uvicorn app.main:app --app-dir ../backend --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/e2e-api.log" 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/api/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if ! curl --fail --silent http://127.0.0.1:8000/api/health >/dev/null; then
+            cat "$RUNNER_TEMP/e2e-api.log"
+            exit 1
+          fi
+          npm run test:e2e
+      - name: Сохранить отчёт и диагностику Playwright
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   docker:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
