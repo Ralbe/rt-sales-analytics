@@ -167,9 +167,42 @@ class Project(Base):
     payment_type: Mapped[ReferenceValue | None] = relationship(foreign_keys=[payment_type_id], lazy="joined")
     customer_stage: Mapped[ReferenceValue | None] = relationship(foreign_keys=[customer_stage_id], lazy="joined")
     indicator: Mapped[ReferenceValue | None] = relationship(foreign_keys=[indicator_id], lazy="joined")
-    assessment_status: Mapped[ReferenceValue | None] = relationship(
-        foreign_keys=[assessment_status_id], lazy="joined"
+    assessment_status: Mapped[ReferenceValue | None] = relationship(foreign_keys=[assessment_status_id], lazy="joined")
+    financial_entries: Mapped[list["ProjectFinancialEntry"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectFinancialEntry.year, ProjectFinancialEntry.month, ProjectFinancialEntry.id",
     )
+
+
+class ProjectFinancialEntry(Base):
+    __tablename__ = "project_financial_entries"
+    __table_args__ = (
+        CheckConstraint("kind IN ('revenue', 'cost')", name="ck_project_financial_kind"),
+        CheckConstraint("month BETWEEN 1 AND 12", name="ck_project_financial_month"),
+        CheckConstraint("year BETWEEN 1900 AND 2200", name="ck_project_financial_year"),
+        CheckConstraint("amount >= 0", name="ck_project_financial_amount"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 3), nullable=False)
+    vat_included: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    article_id: Mapped[int | None] = mapped_column(ForeignKey("reference_values.id"))
+    cost_type_id: Mapped[int | None] = mapped_column(ForeignKey("reference_values.id"))
+    status_id: Mapped[int] = mapped_column(ForeignKey("reference_values.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    project: Mapped[Project] = relationship(back_populates="financial_entries")
+    article: Mapped[ReferenceValue | None] = relationship(foreign_keys=[article_id], lazy="joined")
+    cost_type: Mapped[ReferenceValue | None] = relationship(foreign_keys=[cost_type_id], lazy="joined")
+    status: Mapped[ReferenceValue] = relationship(foreign_keys=[status_id], lazy="joined")
 
 
 class Dashboard(Base):

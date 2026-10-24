@@ -3,18 +3,37 @@ from decimal import Decimal
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from sqlalchemy import Select, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core import cache
 from app.db import get_db
 from app.deps import PROJECT_EDITORS, get_current_user, manager_scope, require_roles
-from app.models import CLOSED_STAGES, STAGE_LABELS, Client, Project, ReferenceValue, Role, Service, Stage, User
-from app.schemas import NameCheckOut, ProjectIn, ProjectOut, ProjectPage
+from app.models import (
+    CLOSED_STAGES,
+    STAGE_LABELS,
+    Client,
+    Project,
+    ProjectFinancialEntry,
+    ReferenceValue,
+    Role,
+    Service,
+    Stage,
+    User,
+)
+from app.schemas import (
+    NameCheckOut,
+    ProjectFinancialEntryIn,
+    ProjectFinancialEntryOut,
+    ProjectIn,
+    ProjectOut,
+    ProjectPage,
+)
 from app.services import audit
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -65,6 +84,7 @@ def to_out(p: Project) -> dict:
         "period_plan": p.period_plan,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
+        "financial_entries": p.financial_entries,
     }
 
 
@@ -77,7 +97,7 @@ def _filtered_query(
     stage: list[Stage],
     open_only: bool,
 ) -> Select:
-    stmt = select(Project).join(Client, Client.id == Project.client_id)
+    stmt = select(Project).options(selectinload(Project.financial_entries)).join(Client, Client.id == Project.client_id)
     scope = manager_scope(user)
     if scope is not None:
         stmt = stmt.where(Project.manager_id == scope)
@@ -156,37 +176,75 @@ def export_projects(
     ws = wb.active
     ws.title = "Проекты"
     headers = [
-        "ID", "Проект", "Клиент", "ИНН", "Сегмент", "Услуга", "Ответственный", "Стадия",
-        "Сумма, ₽", "Себестоимость, ₽", "Маржа, ₽", "Вероятность, %", "Начало", "План закрытия", "Закрыт",
-        "Тип платежа", "Этап по ТЗ", "Индикатор", "Принимаемый к прогнозу", "Принимаемый к оценке",
-        "Реализация через ДЗО", "Контроль руководства", "Отраслевое решение", "Отраслевой менеджер",
-        "Номер отраслевого проекта", "Год реализации", "Статус проекта", "Сделано за период", "Планы на период",
+        "ID",
+        "Проект",
+        "Клиент",
+        "ИНН",
+        "Сегмент",
+        "Услуга",
+        "Ответственный",
+        "Стадия",
+        "Сумма, ₽",
+        "Себестоимость, ₽",
+        "Маржа, ₽",
+        "Вероятность, %",
+        "Начало",
+        "План закрытия",
+        "Закрыт",
+        "Тип платежа",
+        "Этап по ТЗ",
+        "Индикатор",
+        "Принимаемый к прогнозу",
+        "Принимаемый к оценке",
+        "Реализация через ДЗО",
+        "Контроль руководства",
+        "Отраслевое решение",
+        "Отраслевой менеджер",
+        "Номер отраслевого проекта",
+        "Год реализации",
+        "Статус проекта",
+        "Сделано за период",
+        "Планы на период",
         "Создан",
     ]
     ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True)
     for p in projects:
-        ws.append([
-            p.id, p.name, p.client.name, p.client.inn, p.client.segment.name, p.service.name, p.manager.full_name,
-            STAGE_LABELS[p.stage], float(p.amount), float(p.cost), float(p.amount - p.cost), p.probability,
-            p.start_date, p.expected_close_date, p.closed_at,
-            p.payment_type.name if p.payment_type else None,
-            p.customer_stage.name if p.customer_stage else None,
-            p.indicator.name if p.indicator else None,
-            p.accepted_for_forecast,
-            p.assessment_status.name if p.assessment_status else None,
-            p.subsidiary_implementation,
-            p.management_control,
-            p.is_industry_solution,
-            p.industry_manager,
-            p.industry_project_number,
-            p.implementation_year,
-            p.project_status,
-            p.realized_work,
-            p.period_plan,
-            p.created_at,
-        ])
+        ws.append(
+            [
+                p.id,
+                p.name,
+                p.client.name,
+                p.client.inn,
+                p.client.segment.name,
+                p.service.name,
+                p.manager.full_name,
+                STAGE_LABELS[p.stage],
+                float(p.amount),
+                float(p.cost),
+                float(p.amount - p.cost),
+                p.probability,
+                p.start_date,
+                p.expected_close_date,
+                p.closed_at,
+                p.payment_type.name if p.payment_type else None,
+                p.customer_stage.name if p.customer_stage else None,
+                p.indicator.name if p.indicator else None,
+                p.accepted_for_forecast,
+                p.assessment_status.name if p.assessment_status else None,
+                p.subsidiary_implementation,
+                p.management_control,
+                p.is_industry_solution,
+                p.industry_manager,
+                p.industry_project_number,
+                p.implementation_year,
+                p.project_status,
+                p.realized_work,
+                p.period_plan,
+                p.created_at,
+            ]
+        )
     widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(headers) - 15)
     for index, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
@@ -299,11 +357,91 @@ def update_project(
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
     project = _get_visible(db, project_id, user)
-    before = {"stage": project.stage.value, "amount": str(project.amount)}
+    before = _audit_snapshot(project)
     _apply(db, project, data, user)
-    audit.record(db, user.id, "update", "project", project.id, before=before,
-                 after={"stage": project.stage.value, "amount": str(project.amount)})
+    audit.record(db, user.id, "update", "project", project.id, before=before, after=_audit_snapshot(project))
     db.commit()
     cache.bump("analytics")
     db.refresh(project)
     return to_out(project)
+
+
+def _audit_snapshot(project: Project) -> dict:
+    """Capture editable fields with exact decimal values for the project history."""
+    fields = (*ProjectIn.model_fields, "closed_at")
+    return jsonable_encoder(
+        {field: getattr(project, field) for field in fields},
+        custom_encoder={Decimal: str},
+    )
+
+
+@router.put("/{project_id}/financial-entries", response_model=list[ProjectFinancialEntryOut])
+def replace_financial_entries(
+    project_id: int,
+    entries: list[ProjectFinancialEntryIn],
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*PROJECT_EDITORS)),
+) -> list[ProjectFinancialEntry]:
+    project = _get_visible(db, project_id, user)
+    if len(entries) > 500:
+        raise HTTPException(422, "Не более 500 финансовых строк на проект")
+    category_fields = {
+        "revenue": {"status_id": "revenue_status"},
+        "cost": {"status_id": "cost_status", "article_id": "cost_article", "cost_type_id": "cost_type"},
+    }
+    references = []
+    for entry in entries:
+        row_refs = {}
+        for field, category in category_fields[entry.kind].items():
+            ref_id = getattr(entry, field)
+            if ref_id is None and entry.kind == "cost" and field != "status_id":
+                raise HTTPException(422, {"field": field, "message": "Обязательное поле"})
+            ref = db.get(ReferenceValue, ref_id) if ref_id is not None else None
+            if ref is not None and (not ref.is_active or ref.category != category):
+                raise HTTPException(
+                    422, {"field": field, "message": "Справочник не соответствует типу финансовой строки"}
+                )
+            if field == "status_id" and ref is None:
+                raise HTTPException(422, {"field": field, "message": "Укажите статус"})
+            row_refs[field] = ref
+        references.append(row_refs)
+    before = [
+        {
+            "kind": row.kind,
+            "year": row.year,
+            "month": row.month,
+            "amount": str(row.amount),
+            "vat_included": row.vat_included,
+            "status_id": row.status_id,
+            "article_id": row.article_id,
+            "cost_type_id": row.cost_type_id,
+        }
+        for row in project.financial_entries
+    ]
+    project.financial_entries.clear()
+    db.flush()
+    project.financial_entries.extend(
+        ProjectFinancialEntry(
+            kind=entry.kind,
+            year=entry.year,
+            month=entry.month,
+            amount=entry.amount,
+            vat_included=entry.vat_included,
+            status=ref["status_id"],
+            article=ref["article_id"],
+            cost_type=ref["cost_type_id"],
+        )
+        for entry, ref in zip(entries, references, strict=True)
+    )
+    audit.record(
+        db,
+        user.id,
+        "replace_financial_entries",
+        "project",
+        project.id,
+        before=before,
+        after=[entry.model_dump(mode="json") for entry in entries],
+    )
+    db.commit()
+    db.refresh(project)
+    return project.financial_entries

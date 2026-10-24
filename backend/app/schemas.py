@@ -82,6 +82,10 @@ class RefsOut(BaseModel):
     assessment_statuses: list[RefItem]
     project_indicators: list[RefItem]
     customer_stages: list[CustomerStageItem]
+    cost_articles: list[RefItem]
+    cost_types: list[RefItem]
+    revenue_statuses: list[RefItem]
+    cost_statuses: list[RefItem]
     roles: list[CodeItem]
 
 
@@ -197,6 +201,32 @@ class ProjectOut(ORM):
     project_status: str | None
     realized_work: str
     period_plan: str
+    created_at: datetime
+    updated_at: datetime
+    financial_entries: list["ProjectFinancialEntryOut"] = Field(default_factory=list)
+
+
+class ProjectFinancialEntryIn(BaseModel):
+    kind: Literal["revenue", "cost"]
+    year: int = Field(ge=1900, le=2200)
+    month: int = Field(ge=1, le=12)
+    amount: Decimal = Field(ge=0, le=Decimal("1e12"), decimal_places=3)
+    vat_included: bool
+    status_id: int
+    article_id: int | None = None
+    cost_type_id: int | None = None
+
+
+class ProjectFinancialEntryOut(ORM):
+    id: int
+    kind: Literal["revenue", "cost"]
+    year: int
+    month: int
+    amount: Decimal
+    vat_included: bool
+    status: RefItem
+    article: RefItem | None
+    cost_type: RefItem | None
     created_at: datetime
     updated_at: datetime
 

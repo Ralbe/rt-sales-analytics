@@ -1,6 +1,38 @@
 """Customer-specification lookup values shared by the seed and API."""
 
 REFERENCE_DATA = {
+    "cost_article": [
+        ("goods", "Продажа товаров", 10, None),
+        ("other_direct", "Прочие прямые", 20, None),
+        ("subcontract", "Субподряд", 30, None),
+        ("channel_rent", "Аренда каналов", 40, None),
+        ("gph", "ГПХ", 50, None),
+        ("gph_insurance", "СВ по ГПХ", 60, None),
+        ("pip_t", "ПиПТ", 70, None),
+        ("content", "Контент", 80, None),
+        ("delivery", "Доставка счетов", 90, None),
+        ("advertising", "Реклама", 100, None),
+        ("commissions", "Комиссионные", 110, None),
+        ("ruo", "РУО", 120, None),
+        ("rsd", "РСД", 130, None),
+        ("penalties", "Штрафы", 140, None),
+    ],
+    "cost_type": [
+        ("direct", "Прямые", 10, None),
+        ("commercial", "Коммерческие", 20, None),
+        ("rsd", "РСД", 30, None),
+        ("penalties", "Штрафы", 40, None),
+    ],
+    "revenue_status": [
+        ("accrued", "начислена", 10, None),
+        ("forecast", "прогнозное начисление", 20, None),
+        ("planned", "начисление планируется", 30, None),
+    ],
+    "cost_status": [
+        ("accrued", "начислены", 10, None),
+        ("reserve", "создан резерв", 20, None),
+        ("planned", "отражение планируется", 30, None),
+    ],
     "payment_type": [
         ("installations", "Инсталляции", 10, None),
         ("service", "Сервисная", 20, None),
