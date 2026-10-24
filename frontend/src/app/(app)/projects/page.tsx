@@ -84,9 +84,11 @@ export default function ProjectsPage() {
           </div>
         )}
         <div className="spacer" />
-        <a className="btn small" href={`/api/projects/export.xlsx${toQuery(params)}`}>
-          Выгрузить в Excel
-        </a>
+        {seesAllProjects(me?.role) && (
+          <a className="btn small" href={`/api/projects/export.xlsx${toQuery(params)}`}>
+            Выгрузить в Excel
+          </a>
+        )}
         {canEditProjects(me?.role) && (
           <Link className="btn small primary" href="/projects/new">
             + Новый проект

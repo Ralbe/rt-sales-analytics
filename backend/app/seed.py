@@ -29,10 +29,10 @@ SERVICES = {
 }
 USERS = [
     ("analyst@example.com", "Анна Аналитикова", Role.analyst),
-    ("head@example.com", "Олег Руководов", Role.head),
-    ("manager1@example.com", "Мария Продажина", Role.manager),
-    ("manager2@example.com", "Иван Сделкин", Role.manager),
-    ("manager3@example.com", "Елена Клиентова", Role.manager),
+    ("head@example.com", "Олег Руководов", Role.admin),
+    ("manager1@example.com", "Мария Продажина", Role.user),
+    ("manager2@example.com", "Иван Сделкин", Role.user),
+    ("manager3@example.com", "Елена Клиентова", Role.user),
     ("admin@example.com", "Администратор", Role.admin),
 ]
 NAME_PREFIX = ["ООО", "АО", "ПАО", "ГБУ", "МУП"]
@@ -74,7 +74,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
     users = [User(email=e, full_name=n, role=r, password_hash=password_hash) for e, n, r in USERS]
     db.add_all(users)
     db.flush()
-    managers = [u for u in users if u.role in (Role.manager, Role.head)]
+    managers = [u for u in users if u.role == Role.user]
 
     inns: set[str] = set()
     clients = []

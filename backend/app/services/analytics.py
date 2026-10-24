@@ -37,7 +37,7 @@ class Filters:
     segment_ids: tuple[int, ...] = ()
     service_ids: tuple[int, ...] = ()
     manager_ids: tuple[int, ...] = ()
-    # Ограничение по правам: менеджер видит только свои проекты
+    # Ограничение по правам: пользователь видит только свои проекты.
     scope_manager_id: int | None = None
 
 

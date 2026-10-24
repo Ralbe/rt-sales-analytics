@@ -23,8 +23,7 @@ from app.db import Base
 
 class Role(str, enum.Enum):
     analyst = "analyst"
-    manager = "manager"
-    head = "head"
+    user = "user"
     admin = "admin"
 
 
@@ -41,8 +40,7 @@ CLOSED_STAGES = {Stage.won, Stage.lost}
 
 ROLE_LABELS = {
     Role.analyst: "Аналитик",
-    Role.manager: "Менеджер",
-    Role.head: "Руководитель",
+    Role.user: "Пользователь",
     Role.admin: "Администратор",
 }
 

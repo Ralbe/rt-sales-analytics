@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import { api, post } from "@/lib/api";
-import { ROLE_LABELS, canEditProjects } from "@/lib/hooks";
+import { ROLE_LABELS, canConfigureDashboards, canEditProjects } from "@/lib/hooks";
 import type { Dashboard, User } from "@/lib/types";
 
 /** Панель управления: состав пунктов зависит от роли пользователя. */
@@ -40,9 +40,11 @@ export function Sidebar({ user }: { user: User }) {
           {d.name}
         </Link>
       ))}
-      <Link href="/dashboards/new" className={active("/dashboards/new")}>
-        + Новый дашборд
-      </Link>
+      {canConfigureDashboards(user.role) && (
+        <Link href="/dashboards/new" className={active("/dashboards/new")}>
+          + Новый дашборд
+        </Link>
+      )}
 
       {shared.length > 0 && <div className="section">Общие</div>}
       {shared.map((d) => (

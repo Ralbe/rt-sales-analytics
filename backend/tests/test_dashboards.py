@@ -20,16 +20,18 @@ def test_swap_chart_type_and_save(as_analyst):
     assert saved["config"]["chart"] == "donut"
 
 
-def test_shared_dashboard_visible_but_readonly(client, db):
+def test_shared_dashboard_visible_but_readonly_for_user(client, db):
     login(client, db, "analyst@example.com")
     shared = client.post("/api/dashboards", json={"name": "Для всех", "widgets": [], "is_shared": True}).json()
     client.post("/api/auth/logout")
 
     login(client, db, "manager1@example.com")
-    names = [d["name"] for d in client.get("/api/dashboards").json()]
+    dashboards = client.get("/api/dashboards").json()
+    names = [d["name"] for d in dashboards]
     assert "Для всех" in names
+    assert all(d["editable"] is False for d in dashboards)
     r = client.put(f"/api/dashboards/{shared['id']}", json={"name": "x", "widgets": []})
     assert r.status_code == 403
-    assert client.post(f"/api/dashboards/{shared['id']}/copy").status_code == 201
-    # Менеджер не может публиковать
+    assert client.post(f"/api/dashboards/{shared['id']}/copy").status_code == 403
     assert client.post("/api/dashboards", json={"name": "Моё", "is_shared": True}).status_code == 403
+    assert client.post("/api/dashboards", json={"name": "Мой", "widgets": []}).status_code == 403
