@@ -57,15 +57,31 @@ class ManagerItem(ORM):
     full_name: str
 
 
+class ServiceItem(ORM):
+    id: int
+    name: str
+    group_name: str | None = None
+
+
 class StageItem(CodeItem):
+    probability: int
+
+
+class CustomerStageItem(ORM):
+    id: int
+    name: str
     probability: int
 
 
 class RefsOut(BaseModel):
     segments: list[RefItem]
-    services: list[RefItem]
+    services: list[ServiceItem]
     managers: list[ManagerItem]
     stages: list[StageItem]
+    payment_types: list[RefItem]
+    assessment_statuses: list[RefItem]
+    project_indicators: list[RefItem]
+    customer_stages: list[CustomerStageItem]
     roles: list[CodeItem]
 
 
@@ -116,6 +132,20 @@ class ProjectIn(BaseModel):
     probability: int = Field(ge=0, le=100)
     start_date: date
     expected_close_date: date
+    payment_type_id: int | None = None
+    customer_stage_id: int | None = None
+    indicator_id: int | None = None
+    accepted_for_forecast: bool = False
+    assessment_status_id: int | None = None
+    subsidiary_implementation: bool = False
+    management_control: bool = False
+    is_industry_solution: bool = False
+    industry_manager: str | None = Field(default=None, max_length=200)
+    industry_project_number: str | None = Field(default=None, max_length=100)
+    implementation_year: int | None = Field(default=None, ge=1900, le=2200)
+    project_status: str | None = Field(default=None, max_length=100)
+    realized_work: str = Field(default="", max_length=5000)
+    period_plan: str = Field(default="", max_length=5000)
 
     @field_validator("name")
     @classmethod
@@ -129,6 +159,10 @@ class ProjectIn(BaseModel):
     def check_dates(self) -> "ProjectIn":
         if self.expected_close_date < self.start_date:
             raise ValueError("Плановая дата закрытия раньше даты начала")
+        if not self.accepted_for_forecast and self.assessment_status_id is not None:
+            raise ValueError("Статус оценки можно указать только для проекта, принятого к прогнозу")
+        if not self.is_industry_solution and (self.industry_manager or self.industry_project_number):
+            raise ValueError("Отраслевого менеджера и номер проекта можно указать только для отраслевого решения")
         return self
 
 
@@ -139,7 +173,7 @@ class ProjectOut(ORM):
     client: RefItem
     segment: RefItem
     manager: ManagerItem
-    service: RefItem
+    service: ServiceItem
     stage: Stage
     amount: Decimal
     cost: Decimal
@@ -149,6 +183,21 @@ class ProjectOut(ORM):
     start_date: date
     expected_close_date: date
     closed_at: date | None
+    payment_type: RefItem | None
+    customer_stage: RefItem | None
+    indicator: RefItem | None
+    accepted_for_forecast: bool
+    assessment_status: RefItem | None
+    subsidiary_implementation: bool
+    management_control: bool
+    is_industry_solution: bool
+    industry_manager: str | None
+    industry_project_number: str | None
+    implementation_year: int | None
+    project_status: str | None
+    realized_work: str
+    period_plan: str
+    created_at: datetime
     updated_at: datetime
 
 

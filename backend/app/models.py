@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -79,6 +80,23 @@ class Service(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
+    group_name: Mapped[str | None] = mapped_column(String(100))
+
+
+class ReferenceValue(Base):
+    __tablename__ = "reference_values"
+    __table_args__ = (
+        UniqueConstraint("category", "code", name="uq_reference_category_code"),
+        CheckConstraint("probability IS NULL OR probability BETWEEN 0 AND 100", name="ck_reference_probability"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    code: Mapped[str] = mapped_column(String(50))
+    name: Mapped[str] = mapped_column(String(100))
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    probability: Mapped[int | None] = mapped_column(Integer)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=func.true())
 
 
 class User(Base):
@@ -124,6 +142,20 @@ class Project(Base):
     start_date: Mapped[date] = mapped_column(Date, index=True)
     expected_close_date: Mapped[date] = mapped_column(Date)
     closed_at: Mapped[date | None] = mapped_column(Date, index=True)
+    payment_type_id: Mapped[int | None] = mapped_column(ForeignKey("reference_values.id"))
+    customer_stage_id: Mapped[int | None] = mapped_column(ForeignKey("reference_values.id"))
+    indicator_id: Mapped[int | None] = mapped_column(ForeignKey("reference_values.id"))
+    accepted_for_forecast: Mapped[bool] = mapped_column(Boolean, default=False, server_default=func.false())
+    assessment_status_id: Mapped[int | None] = mapped_column(ForeignKey("reference_values.id"))
+    subsidiary_implementation: Mapped[bool] = mapped_column(Boolean, default=False, server_default=func.false())
+    management_control: Mapped[bool] = mapped_column(Boolean, default=False, server_default=func.false())
+    is_industry_solution: Mapped[bool] = mapped_column(Boolean, default=False, server_default=func.false())
+    industry_manager: Mapped[str | None] = mapped_column(String(200))
+    industry_project_number: Mapped[str | None] = mapped_column(String(100))
+    implementation_year: Mapped[int | None] = mapped_column(Integer)
+    project_status: Mapped[str | None] = mapped_column(String(100))
+    realized_work: Mapped[str] = mapped_column(Text, default="", server_default="")
+    period_plan: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -132,6 +164,12 @@ class Project(Base):
     client: Mapped[Client] = relationship(lazy="joined")
     manager: Mapped[User] = relationship(lazy="joined")
     service: Mapped[Service] = relationship(lazy="joined")
+    payment_type: Mapped[ReferenceValue | None] = relationship(foreign_keys=[payment_type_id], lazy="joined")
+    customer_stage: Mapped[ReferenceValue | None] = relationship(foreign_keys=[customer_stage_id], lazy="joined")
+    indicator: Mapped[ReferenceValue | None] = relationship(foreign_keys=[indicator_id], lazy="joined")
+    assessment_status: Mapped[ReferenceValue | None] = relationship(
+        foreign_keys=[assessment_status_id], lazy="joined"
+    )
 
 
 class Dashboard(Base):
