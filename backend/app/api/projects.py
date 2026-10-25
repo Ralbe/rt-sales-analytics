@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from io import BytesIO
 
@@ -49,6 +49,13 @@ SORT_FIELDS = {
 }
 SORT_PATTERN = r"^-?(name|amount|start_date|expected_close_date|updated_at)$"
 EXPORT_LIMIT = 10_000
+
+
+def _xlsx_timestamp(value: datetime) -> str:
+    # Excel не поддерживает tzinfo: явный ISO 8601 в UTC сохраняет смысл времени.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 def to_out(p: Project) -> dict:
@@ -207,7 +214,7 @@ def export_projects(
         "Статус проекта",
         "Сделано за период",
         "Планы на период",
-        "Создан",
+        "Создан (UTC)",
     ]
     ws.append(headers)
     for cell in ws[1]:
@@ -244,9 +251,13 @@ def export_projects(
                 p.project_status,
                 p.realized_work,
                 p.period_plan,
-                p.created_at,
+                _xlsx_timestamp(p.created_at),
             ]
         )
+        # Пользовательский текст должен оставаться текстом, даже если начинается с '='.
+        for cell in ws[ws.max_row]:
+            if cell.data_type == "f":
+                cell.data_type = "s"
     widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(headers) - 15)
     for index, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
@@ -424,8 +435,8 @@ def replace_financial_entries(
                 raise HTTPException(
                     422, {"field": field, "message": "Справочник не соответствует типу финансовой строки"}
                 )
-            if field == "status_id" and ref is None:
-                raise HTTPException(422, {"field": field, "message": "Укажите статус"})
+            if ref is None:
+                raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
             row_refs[field] = ref
         references.append(row_refs)
     before = [financial_snapshot(row) for row in project.financial_entries]
@@ -447,6 +458,7 @@ def replace_financial_entries(
         )
         for entry, ref in zip(entries, references, strict=True)
     )
+    project.updated_at = func.now()
     audit.record(
         db,
         user.id,

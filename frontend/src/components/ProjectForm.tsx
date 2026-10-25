@@ -164,6 +164,8 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const [nameTaken, setNameTaken] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
+  const persistedId = project?.id ?? pendingProjectId;
   const financialBaseline = useRef(financialRowsFromProject(project));
   const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(financialBaseline.current);
   const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialBaseline.current);
@@ -217,10 +219,10 @@ function ProjectFormInner({ project }: { project?: Project }) {
     const { name, client } = getValues();
     if (!client || name.trim().length < 3) return setNameTaken(false);
     const r = await api<{ available: boolean }>("/projects/check-name", {
-      query: { name: name.trim(), client_id: client.id, exclude_id: project?.id },
+      query: { name: name.trim(), client_id: client.id, exclude_id: persistedId },
     }).catch(() => ({ available: true }));
     setNameTaken(!r.available);
-  }, [getValues, project?.id]);
+  }, [getValues, persistedId]);
 
   useEffect(() => {
     if (values.client?.id) checkName();
@@ -276,37 +278,43 @@ function ProjectFormInner({ project }: { project?: Project }) {
       period_plan: v.period_plan,
     };
     let savedProjectId: number | undefined;
+    let cardSaved = false;
     try {
-      const saved = project
-        ? await put<Project>(`/projects/${project.id}`, body)
+      const saved = persistedId
+        ? await put<Project>(`/projects/${persistedId}`, body)
         : await post<Project>("/projects", body);
       savedProjectId = saved.id;
-      const savedEntries = await put<FinancialEntry[]>(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
+      cardSaved = true;
+      if (isNew) setPendingProjectId(saved.id);
+      await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
         kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
       })));
-      const savedProject = { ...saved, financial_entries: savedEntries };
+      const complete = await api<Project>(`/projects/${saved.id}`);
       await queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "project-history" });
       if (isNew) {
         submittedRef.current = true;
         saveDraft(null);
         router.replace(`/projects/${saved.id}`);
       } else {
-        queryClient.setQueryData(["project", String(saved.id)], savedProject);
-        reset(fromProject(savedProject));
-        financialBaseline.current = financialRowsFromProject(savedProject);
+        queryClient.setQueryData(["project", String(saved.id)], complete);
+        reset(fromProject(complete));
+        financialBaseline.current = financialRowsFromProject(complete);
         setFinancialEntries(financialBaseline.current);
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
     } catch (e) {
-      if (!(e instanceof ApiError)) return setFormError("Сервер недоступен, попробуйте ещё раз");
+      const partial = cardSaved
+        ? "Карточка сохранена. Не удалось подтвердить сохранение финансовых строк. Повторите сохранение — новая карточка не создастся. "
+        : "";
+      if (!(e instanceof ApiError)) return setFormError(partial + "Сервер недоступен, попробуйте ещё раз");
       const fields = Object.entries(e.fields);
       fields.forEach(([f, message]) =>
         setError((SERVER_FIELD[f] ?? f) as keyof FormValues, { type: "server", message }),
       );
-      if (!fields.length || e.fields._form) setFormError(e.message);
+      if (partial || !fields.length || e.fields._form) setFormError(partial + e.message);
     } finally {
       // Карточка могла сохраниться, даже если следующий запрос финансов завершился ошибкой.
       if (savedProjectId !== undefined) {
@@ -316,6 +324,8 @@ function ProjectFormInner({ project }: { project?: Project }) {
   });
 
   const clearDraft = () => {
+    setPendingProjectId(null);
+    setFormError(null);
     saveDraft(null);
     reset(fromProject(undefined, me?.id));
     setDraftRestored(false);
@@ -679,7 +689,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
         </button>
         {!readOnly && (
           <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !isDirty && !financialDirty)}>
-            {isSubmitting ? "Сохраняем…" : isNew ? "Создать проект" : "Сохранить"}
+            {isSubmitting ? "Сохраняем…" : isNew ? pendingProjectId ? "Повторить сохранение" : "Создать проект" : "Сохранить"}
           </button>
         )}
       </div>
