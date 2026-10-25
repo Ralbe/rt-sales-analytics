@@ -284,3 +284,19 @@ test("пустой дашборд печатает явное сообщение
   await page.getByRole("button", { name: "PDF / Печать" }).click();
   await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(2);
 });
+
+test("первое монтирование печатного SVG и повторный снимок работают при уже загруженном ECharts", async ({ page }) => {
+  await openDashboard(page, { widgets: [widgets[1]] });
+  // Загруженный экранный график делает callback готовности печатного графика синхронным при монтировании.
+  await expect(page.locator(".widget canvas").first()).toBeVisible();
+  const report = await preparePrint(page);
+  const chart = report.locator("[data-print-chart]");
+  await expect(chart).toHaveAttribute("data-print-chart", "ready");
+  await expect(chart.locator("svg path").first()).toBeAttached();
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  await expect(report.locator("[data-print-chart]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "PDF / Печать" })).toBeEnabled();
+  await page.getByRole("button", { name: "PDF / Печать" }).click();
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(2);
+  await expect(report.locator("[data-print-chart]")).toHaveAttribute("data-print-chart", "ready");
+});
