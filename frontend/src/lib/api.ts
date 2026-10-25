@@ -1,5 +1,7 @@
 export type FieldErrors = Record<string, string>;
 
+export const SESSION_EXPIRED_EVENT = "session-expired";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -55,8 +57,8 @@ export async function api<T>(path: string, init: RequestInit & { query?: Query }
     if (rest.signal?.aborted) throw error;
     throw new ApiError(0, "Не удалось связаться с сервером. Проверьте подключение и повторите попытку.");
   }
-  if (res.status === 401 && !path.startsWith("/auth/") && typeof window !== "undefined") {
-    window.location.href = "/login";
+  if (res.status === 401 && path !== "/auth/login" && path !== "/auth/2fa" && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
   }
   if (!res.ok) {
     let body: unknown = null;

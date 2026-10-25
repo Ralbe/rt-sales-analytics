@@ -59,6 +59,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   const refs = refsQuery.data;
   const [widgets, setWidgets] = useState<Widget[]>(dashboard.widgets);
   const [filters, setFilters] = useState<DashboardFilters>({ ...EMPTY_FILTERS, ...dashboard.filters });
+  const filtersChanged = useRef(false);
   const [name, setName] = useState(dashboard.name);
   const [shared, setShared] = useState(dashboard.is_shared);
   const [dirty, setDirty] = useState(false);
@@ -74,7 +75,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   useEffect(() => {
     if (dirty) return;
     setWidgets(dashboard.widgets);
-    setFilters({ ...EMPTY_FILTERS, ...dashboard.filters });
+    if (!filtersChanged.current) setFilters({ ...EMPTY_FILTERS, ...dashboard.filters });
     setName(dashboard.name);
     setShared(dashboard.is_shared);
   }, [dashboard, dirty]);
@@ -109,6 +110,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
       const saved = await put<Dashboard>(`/dashboards/${dashboard.id}`, { name, widgets, filters, is_shared: shared });
       setWidgets(saved.widgets);
       setFilters({ ...EMPTY_FILTERS, ...saved.filters });
+      filtersChanged.current = false;
       setName(saved.name);
       setShared(saved.is_shared);
       setDirty(false);
@@ -122,6 +124,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   };
 
   const reset = () => {
+    filtersChanged.current = false;
     setWidgets(dashboard.widgets);
     setFilters({ ...EMPTY_FILTERS, ...dashboard.filters });
     setName(dashboard.name);
@@ -143,6 +146,8 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   };
 
   const setFilter = (key: keyof DashboardFilters) => (value: number[]) => {
+    // Фильтры просмотра сохраняются локально и не дают права редактировать общий дашборд.
+    filtersChanged.current = true;
     setFilters((f) => ({ ...f, [key]: value }));
     if (editable) setDirty(true);
   };
