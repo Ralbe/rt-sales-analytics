@@ -44,11 +44,17 @@ function parseError(status: number, body: unknown): ApiError {
 
 export async function api<T>(path: string, init: RequestInit & { query?: Query } = {}): Promise<T> {
   const { query, ...rest } = init;
-  const res = await fetch(`/api${path}${toQuery(query)}`, {
-    credentials: "include",
-    ...rest,
-    headers: { "Content-Type": "application/json", ...(rest.headers || {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}${toQuery(query)}`, {
+      credentials: "include",
+      ...rest,
+      headers: { "Content-Type": "application/json", ...(rest.headers || {}) },
+    });
+  } catch (error) {
+    if (rest.signal?.aborted) throw error;
+    throw new ApiError(0, "Не удалось связаться с сервером. Проверьте подключение и повторите попытку.");
+  }
   if (res.status === 401 && !path.startsWith("/auth/") && typeof window !== "undefined") {
     window.location.href = "/login";
   }
@@ -62,7 +68,11 @@ export async function api<T>(path: string, init: RequestInit & { query?: Query }
     throw parseError(res.status, body);
   }
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  try {
+    return await res.json() as T;
+  } catch {
+    throw new ApiError(res.status, "Не удалось прочитать ответ сервера. Повторите попытку.");
+  }
 }
 
 export const post = <T>(path: string, body?: unknown) =>

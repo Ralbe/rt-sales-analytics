@@ -8,6 +8,7 @@ import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ClientCombobox } from "@/components/ClientCombobox";
+import { QueryState } from "@/components/QueryState";
 import { ApiError, api, post, put } from "@/lib/api";
 import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
@@ -134,10 +135,20 @@ function saveDraft(values: FormValues | null) {
 }
 
 export function ProjectForm({ project }: { project?: Project }) {
-  const { data: refs } = useRefs();
+  const refsQuery = useRefs();
   // Ждём справочники: иначе выпадающие списки не смогут показать восстановленные значения
-  if (!refs) return <div className="muted">Загрузка…</div>;
-  return <ProjectFormInner project={project} />;
+  return (
+    <>
+      <QueryState
+        query={refsQuery}
+        title="Не удалось загрузить справочники"
+        loadingText="Загружаем справочники…"
+        empty={refsQuery.data?.services.length === 0}
+        emptyText="В справочнике пока нет доступных услуг."
+      />
+      {refsQuery.data && <ProjectFormInner project={project} />}
+    </>
+  );
 }
 
 function ProjectFormInner({ project }: { project?: Project }) {
@@ -153,8 +164,9 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const [nameTaken, setNameTaken] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(() => financialRowsFromProject(project));
-  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialRowsFromProject(project));
+  const financialBaseline = useRef(financialRowsFromProject(project));
+  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(financialBaseline.current);
+  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialBaseline.current);
 
   const { register, control, handleSubmit, reset, setValue, setError, trigger, getValues, watch, formState } =
     useForm<FormValues>({
@@ -163,6 +175,14 @@ function ProjectFormInner({ project }: { project?: Project }) {
       defaultValues: fromProject(project, me?.id),
     });
   const { errors, isSubmitting, isDirty, dirtyFields, touchedFields } = formState;
+
+  // Фоновое обновление может заменить только данные без локальных правок.
+  useEffect(() => {
+    if (!project || isDirty || financialDirty || isSubmitting) return;
+    financialBaseline.current = financialRowsFromProject(project);
+    setFinancialEntries(financialBaseline.current);
+    reset(fromProject(project));
+  }, [project, isDirty, financialDirty, isSubmitting, reset]);
 
   // Восстановление черновика новой карточки
   useEffect(() => {
@@ -275,8 +295,9 @@ function ProjectFormInner({ project }: { project?: Project }) {
         router.replace(`/projects/${saved.id}`);
       } else {
         queryClient.setQueryData(["project", String(saved.id)], savedProject);
-        setFinancialEntries(financialRowsFromProject(savedProject));
         reset(fromProject(savedProject));
+        financialBaseline.current = financialRowsFromProject(savedProject);
+        setFinancialEntries(financialBaseline.current);
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
     } catch (e) {
