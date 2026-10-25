@@ -188,14 +188,6 @@ function ProjectFormInner({ project }: { project?: Project }) {
     reset(fromProject(project));
   }, [project, hasUnsavedChanges, isSubmitting, reset]);
 
-  // Фоновое обновление может заменить только данные без локальных правок.
-  useEffect(() => {
-    if (!project || isDirty || financialDirty || isSubmitting) return;
-    financialBaseline.current = financialRowsFromProject(project);
-    setFinancialEntries(financialBaseline.current);
-    reset(fromProject(project));
-  }, [project, isDirty, financialDirty, isSubmitting, reset]);
-
   // Восстановление черновика новой карточки
   useEffect(() => {
     if (!isNew) return;
@@ -314,8 +306,6 @@ function ProjectFormInner({ project }: { project?: Project }) {
         financialBaseline.current = financialRowsFromProject(complete);
         setFinancialEntries(financialBaseline.current);
         reset(fromProject(complete));
-        financialBaseline.current = financialRowsFromProject(complete);
-        setFinancialEntries(financialBaseline.current);
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
       setPendingSave(false);

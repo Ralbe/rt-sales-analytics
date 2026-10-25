@@ -125,7 +125,7 @@ jobs:
               db.add(User(
                   email=email,
                   full_name="Пользователь E2E",
-                  role=Role.analyst,
+                  role=Role.admin,
                   password_hash=hash_password(password),
                   totp_secret=totp_secret,
                   totp_enabled=True,

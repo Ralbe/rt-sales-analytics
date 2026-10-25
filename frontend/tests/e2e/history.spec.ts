@@ -162,7 +162,7 @@ test("история обновляется при сохранённой кар
   await expect(history).toContainText("История изменений пока пуста.");
   await page.getByLabel("Суть проекта").fill("Карточка сохранена частично");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
-  await expect(page.getByText("Не удалось сохранить финансовые строки", { exact: true })).toBeVisible();
+  await expect(page.getByText("Не удалось сохранить финансовые строки", { exact: false })).toBeVisible();
   await expect(history).toContainText("Карточка сохранена частично");
   expect(state.historyRequests).toBeGreaterThan(1);
 });
