@@ -63,6 +63,15 @@ export function Sidebar({ user }: { user: User }) {
         </Link>
       )}
 
+      {user.role === "admin" && (
+        <>
+          <div className="section">Администрирование</div>
+          <Link href="/users" className={active("/users")}>
+            Пользователи
+          </Link>
+        </>
+      )}
+
       <div className="user">
         <div>{user.full_name}</div>
         <div className="role">{ROLE_LABELS[user.role]}</div>
