@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { MultiSelect } from "@/components/MultiSelect";
+import { QueryState } from "@/components/QueryState";
 import { api, toQuery } from "@/lib/api";
 import { date, money } from "@/lib/format";
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
@@ -27,7 +28,8 @@ const COLUMNS: { key: string; label: string; sort?: string; num?: boolean }[] = 
 export default function ProjectsPage() {
   const router = useRouter();
   const { data: me } = useMe();
-  const { data: refs } = useRefs();
+  const refsQuery = useRefs();
+  const refs = refsQuery.data;
   const [search, setSearch] = useState("");
   const [segments, setSegments] = useState<number[]>([]);
   const [services, setServices] = useState<number[]>([]);
@@ -38,11 +40,12 @@ export default function ProjectsPage() {
   const q = useDebounced(search.trim());
 
   const params = { q, segment_id: segments, service_id: services, manager_id: managers, stage: stages, sort };
-  const { data, isFetching } = useQuery({
+  const projectsQuery = useQuery({
     queryKey: ["projects", params, page],
     queryFn: () => api<ProjectPage>("/projects", { query: { ...params, page, size: PAGE_SIZE } }),
     placeholderData: keepPreviousData,
   });
+  const { data, isFetching } = projectsQuery;
 
   const withReset =
     <T,>(setter: (v: T) => void) =>
@@ -97,6 +100,8 @@ export default function ProjectsPage() {
       </div>
 
       <div className="page-body">
+        <QueryState query={refsQuery} title="Не удалось загрузить справочники фильтров" loadingText="Загружаем справочники фильтров…" />
+        <QueryState query={projectsQuery} title="Не удалось загрузить проекты" loadingText="Загружаем проекты…" />
         <div className="card" style={{ overflow: "auto", opacity: isFetching ? 0.7 : 1 }}>
           <table className="table">
             <thead>
@@ -131,7 +136,7 @@ export default function ProjectsPage() {
                   <td>{date(p.expected_close_date)}</td>
                 </tr>
               ))}
-              {data && data.items.length === 0 && (
+              {!projectsQuery.error && data && data.items.length === 0 && (
                 <tr>
                   <td colSpan={COLUMNS.length} className="muted" style={{ textAlign: "center", padding: 24 }}>
                     Ничего не найдено
@@ -141,7 +146,7 @@ export default function ProjectsPage() {
             </tbody>
           </table>
         </div>
-        <div className="pager">
+        {data && <div className="pager">
           <span className="muted">Всего: {data?.total ?? "…"}</span>
           <button className="btn small" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             ←
@@ -152,7 +157,7 @@ export default function ProjectsPage() {
           <button className="btn small" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
             →
           </button>
-        </div>
+        </div>}
       </div>
     </>
   );

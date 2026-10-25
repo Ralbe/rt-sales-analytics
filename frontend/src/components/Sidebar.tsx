@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import { api, post } from "@/lib/api";
+import { QueryState } from "@/components/QueryState";
 import { ROLE_LABELS, canConfigureDashboards, canEditProjects } from "@/lib/hooks";
 import type { Dashboard, User } from "@/lib/types";
 
@@ -13,10 +14,11 @@ export function Sidebar({ user }: { user: User }) {
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { data: dashboards = [] } = useQuery({
+  const dashboardsQuery = useQuery({
     queryKey: ["dashboards"],
     queryFn: () => api<Dashboard[]>("/dashboards"),
   });
+  const dashboards = dashboardsQuery.data ?? [];
 
   const own = dashboards.filter((d) => d.editable);
   const shared = dashboards.filter((d) => !d.editable);
@@ -35,6 +37,8 @@ export function Sidebar({ user }: { user: User }) {
       </div>
 
       <div className="section">Мои дашборды</div>
+      <QueryState query={dashboardsQuery} title="Не удалось загрузить дашборды" loadingText="Загружаем дашборды…" />
+      {!dashboardsQuery.error && dashboardsQuery.data?.length === 0 && <div>Нет доступных дашбордов</div>}
       {own.map((d) => (
         <Link key={d.id} href={`/dashboards/${d.id}`} className={active(`/dashboards/${d.id}`)} title={d.name}>
           {d.name}

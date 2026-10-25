@@ -8,6 +8,7 @@ import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ClientCombobox } from "@/components/ClientCombobox";
+import { QueryState } from "@/components/QueryState";
 import { ApiError, api, post, put } from "@/lib/api";
 import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
@@ -133,10 +134,20 @@ function saveDraft(values: FormValues | null) {
 }
 
 export function ProjectForm({ project }: { project?: Project }) {
-  const { data: refs } = useRefs();
+  const refsQuery = useRefs();
   // Ждём справочники: иначе выпадающие списки не смогут показать восстановленные значения
-  if (!refs) return <div className="muted">Загрузка…</div>;
-  return <ProjectFormInner project={project} />;
+  return (
+    <>
+      <QueryState
+        query={refsQuery}
+        title="Не удалось загрузить справочники"
+        loadingText="Загружаем справочники…"
+        empty={refsQuery.data?.services.length === 0}
+        emptyText="В справочнике пока нет доступных услуг."
+      />
+      {refsQuery.data && <ProjectFormInner project={project} />}
+    </>
+  );
 }
 
 function ProjectFormInner({ project }: { project?: Project }) {
@@ -152,8 +163,9 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const [nameTaken, setNameTaken] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(() => financialRowsFromProject(project));
-  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialRowsFromProject(project));
+  const financialBaseline = useRef(financialRowsFromProject(project));
+  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(financialBaseline.current);
+  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialBaseline.current);
 
   const { register, control, handleSubmit, reset, setValue, setError, trigger, getValues, watch, formState } =
     useForm<FormValues>({
@@ -162,6 +174,14 @@ function ProjectFormInner({ project }: { project?: Project }) {
       defaultValues: fromProject(project, me?.id),
     });
   const { errors, isSubmitting, isDirty, dirtyFields, touchedFields } = formState;
+
+  // Фоновое обновление может заменить только данные без локальных правок.
+  useEffect(() => {
+    if (!project || isDirty || financialDirty || isSubmitting) return;
+    financialBaseline.current = financialRowsFromProject(project);
+    setFinancialEntries(financialBaseline.current);
+    reset(fromProject(project));
+  }, [project, isDirty, financialDirty, isSubmitting, reset]);
 
   // Восстановление черновика новой карточки
   useEffect(() => {
@@ -258,20 +278,23 @@ function ProjectFormInner({ project }: { project?: Project }) {
       const saved = project
         ? await put<Project>(`/projects/${project.id}`, body)
         : await post<Project>("/projects", body);
-      await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
+      const savedEntries = await put<FinancialEntry[]>(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
         kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
       })));
+      const savedProject = { ...saved, financial_entries: savedEntries };
       await queryClient.invalidateQueries();
       if (isNew) {
         submittedRef.current = true;
         saveDraft(null);
         router.replace(`/projects/${saved.id}`);
       } else {
-        queryClient.setQueryData(["project", String(saved.id)], saved);
-        reset(fromProject(saved));
+        queryClient.setQueryData(["project", String(saved.id)], savedProject);
+        reset(fromProject(savedProject));
+        financialBaseline.current = financialRowsFromProject(savedProject);
+        setFinancialEntries(financialBaseline.current);
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
     } catch (e) {
