@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import GridLayout, { type Layout } from "react-grid-layout";
 
+import { DashboardPrint } from "@/components/dashboard/DashboardPrint";
 import { WidgetCard } from "@/components/dashboard/WidgetCard";
 import { WidgetDialog } from "@/components/dashboard/WidgetDialog";
 import { newWidget } from "@/components/dashboard/catalog";
@@ -162,6 +163,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
           )}
         </div>
         <div className="spacer" />
+        <DashboardPrint name={name} widgets={widgets} filters={filters} />
         {error && <span className="alert">{error}</span>}
         {editable ? (
           <>
