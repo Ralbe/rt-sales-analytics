@@ -152,6 +152,8 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const [nameTaken, setNameTaken] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
+  const persistedId = project?.id ?? pendingProjectId;
   const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(() => financialRowsFromProject(project));
   const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialRowsFromProject(project));
 
@@ -196,10 +198,10 @@ function ProjectFormInner({ project }: { project?: Project }) {
     const { name, client } = getValues();
     if (!client || name.trim().length < 3) return setNameTaken(false);
     const r = await api<{ available: boolean }>("/projects/check-name", {
-      query: { name: name.trim(), client_id: client.id, exclude_id: project?.id },
+      query: { name: name.trim(), client_id: client.id, exclude_id: persistedId },
     }).catch(() => ({ available: true }));
     setNameTaken(!r.available);
-  }, [getValues, project?.id]);
+  }, [getValues, persistedId]);
 
   useEffect(() => {
     if (values.client?.id) checkName();
@@ -254,37 +256,46 @@ function ProjectFormInner({ project }: { project?: Project }) {
       realized_work: v.realized_work,
       period_plan: v.period_plan,
     };
+    let cardSaved = false;
     try {
-      const saved = project
-        ? await put<Project>(`/projects/${project.id}`, body)
+      const saved = persistedId
+        ? await put<Project>(`/projects/${persistedId}`, body)
         : await post<Project>("/projects", body);
+      cardSaved = true;
+      if (isNew) setPendingProjectId(saved.id);
       await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
         kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
       })));
+      const complete = await api<Project>(`/projects/${saved.id}`);
       await queryClient.invalidateQueries();
       if (isNew) {
         submittedRef.current = true;
         saveDraft(null);
         router.replace(`/projects/${saved.id}`);
       } else {
-        queryClient.setQueryData(["project", String(saved.id)], saved);
-        reset(fromProject(saved));
+        queryClient.setQueryData(["project", String(saved.id)], complete);
+        reset(fromProject(complete));
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
     } catch (e) {
-      if (!(e instanceof ApiError)) return setFormError("Сервер недоступен, попробуйте ещё раз");
+      const partial = cardSaved
+        ? "Карточка сохранена. Не удалось подтвердить сохранение финансовых строк. Повторите сохранение — новая карточка не создастся. "
+        : "";
+      if (!(e instanceof ApiError)) return setFormError(partial + "Сервер недоступен, попробуйте ещё раз");
       const fields = Object.entries(e.fields);
       fields.forEach(([f, message]) =>
         setError((SERVER_FIELD[f] ?? f) as keyof FormValues, { type: "server", message }),
       );
-      if (!fields.length || e.fields._form) setFormError(e.message);
+      if (partial || !fields.length || e.fields._form) setFormError(partial + e.message);
     }
   });
 
   const clearDraft = () => {
+    setPendingProjectId(null);
+    setFormError(null);
     saveDraft(null);
     reset(fromProject(undefined, me?.id));
     setDraftRestored(false);
@@ -648,7 +659,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
         </button>
         {!readOnly && (
           <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !isDirty && !financialDirty)}>
-            {isSubmitting ? "Сохраняем…" : isNew ? "Создать проект" : "Сохранить"}
+            {isSubmitting ? "Сохраняем…" : isNew ? pendingProjectId ? "Повторить сохранение" : "Создать проект" : "Сохранить"}
           </button>
         )}
       </div>
