@@ -60,8 +60,13 @@ const FINANCIAL_ROWS: FinancialWrite[] = [
     status_id: 12, article_id: 9, cost_type_id: 11,
   },
 ];
+const ORIGINAL_ROWS: FinancialWrite[] = PROJECT.financial_entries.map((entry) => ({
+  kind: entry.kind, year: entry.year, month: entry.month, amount: entry.amount,
+  vat_included: entry.vat_included, status_id: entry.status!.id,
+  article_id: entry.article?.id ?? null, cost_type_id: entry.cost_type?.id ?? null,
+}));
 
-async function mockApi(page: Page, editing = false) {
+async function mockApi(page: Page, editing = false, options: { financialFailures?: number; finalGet?: Promise<void> } = {}) {
   const state = {
     current: editing ? structuredClone(PROJECT) : null as Project | null,
     creates: [] as ProjectWrite[],
@@ -82,6 +87,10 @@ async function mockApi(page: Page, editing = false) {
       if (path === "/refs") return route.fulfill({ json: REFS });
       if (path === "/clients") return route.fulfill({ json: [CLIENT] });
       if (path === "/dashboards") return route.fulfill({ json: [] });
+      // Пустой ProjectHistoryPage для страницы с интегрированным журналом изменений.
+      if (path === `/projects/${PROJECT.id}/history`) {
+        return route.fulfill({ json: { items: [], limit: 10, offset: 0, has_more: false } });
+      }
       if (path === "/projects/check-name") {
         const check = {
           name: url.searchParams.get("name"),
@@ -95,8 +104,10 @@ async function mockApi(page: Page, editing = false) {
         return route.fulfill({ json: { available: !duplicate } });
       }
       if (path === `/projects/${PROJECT.id}` && state.current) {
-        state.reads.push(structuredClone(state.current));
-        return route.fulfill({ json: state.current });
+        const snapshot = structuredClone(state.current);
+        state.reads.push(snapshot);
+        if (state.financialUpdates.length > (options.financialFailures ?? 1)) await options.finalGet;
+        return route.fulfill({ json: snapshot });
       }
     }
     if (method === "POST" && path === "/projects") {
@@ -118,7 +129,7 @@ async function mockApi(page: Page, editing = false) {
       const rows: FinancialWrite[] = request.postDataJSON();
       state.financialUpdates.push(rows);
       state.writes.push(`PUT /projects/${PROJECT.id}/financial-entries`);
-      if (state.financialUpdates.length === 1) return route.fulfill({ status: 503, body: "" });
+      if (state.financialUpdates.length <= (options.financialFailures ?? 1)) return route.fulfill({ status: 503, body: "" });
       // GET возвращает сохранённые строки, включая справочники; суммы и НДС не пересчитываются.
       state.current = {
         ...state.current,
@@ -159,9 +170,9 @@ async function fillFinancialRow(row: Locator, entry: FinancialWrite) {
     .selectOption(String(entry.status_id));
 }
 
-async function expectFinancialRows(page: Page) {
-  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveCount(FINANCIAL_ROWS.length);
-  for (const [index, entry] of FINANCIAL_ROWS.entries()) {
+async function expectFinancialRows(page: Page, entries = FINANCIAL_ROWS) {
+  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveCount(entries.length);
+  for (const [index, entry] of entries.entries()) {
     const row = financialRow(page, index);
     await expect(row.getByRole("combobox").first()).toHaveValue(entry.kind);
     await expect(row.getByLabel("Год", { exact: true })).toHaveValue(String(entry.year));
@@ -305,5 +316,93 @@ test("существующая карточка: ошибка финансов �
   expect(state.nameChecks.every((check) => check.excludeId === String(PROJECT.id))).toBe(true);
   expect(state.reads.at(-1)?.financial_entries).toEqual(state.current?.financial_entries);
   expect(state.current?.financial_entries).toHaveLength(2);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("IF01: задержанный завершающий GET блокирует поля и финансовые действия до подтверждения", async ({ page }) => {
+  let releaseGet!: () => void;
+  const finalGet = new Promise<void>((resolve) => { releaseGet = resolve; });
+  const state = await mockApi(page, true, { financialFailures: 0, finalGet });
+  const name = "Проект с ожиданием подтверждения";
+  await page.goto(`/projects/${PROJECT.id}`);
+  await editCard(page, name);
+  for (const [index, entry] of FINANCIAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
+  try {
+    await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+    // Первый GET загружает форму, второй остаётся незавершённым после двух успешных PUT.
+    await expect.poll(() => state.reads.length).toBe(2);
+    expect(state.updates).toHaveLength(1);
+    expect(state.financialUpdates).toEqual([FINANCIAL_ROWS]);
+    await expect(page.getByRole("button", { name: "Сохраняем…", exact: true })).toBeDisabled();
+    const fields = page.locator("form.card fieldset");
+    await expect(fields).toHaveCount(2);
+    for (const fieldset of await fields.all()) await expect(fieldset).toHaveAttribute("disabled", "");
+    for (const input of await fields.locator("input, select, textarea, button").all()) await expect(input).toBeDisabled();
+    await expect(page.getByLabel(/Клиент/)).toBeDisabled();
+    await expectCard(page, name);
+    await expectFinancialRows(page);
+    await expect(page.getByText(/Сохранено в/)).toHaveCount(0);
+  } finally {
+    releaseGet();
+  }
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Суть проекта")).toBeEnabled();
+  await expect(page.getByLabel(/Клиент/)).toBeEnabled();
+  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. рублей")).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Добавить финансовую строку", exact: true })).toBeEnabled();
+  await expectCard(page, name);
+  await expectFinancialRows(page);
+  expect(state.creates).toHaveLength(0);
+  expect(state.current?.description).toBe("Правки до сбоя финансового сервиса");
+  expect(state.unexpected).toEqual([]);
+});
+
+test("IF02: возврат всех правок к исходным значениям после 503 оставляет повтор доступным", async ({ page }) => {
+  const state = await mockApi(page, true);
+  const name = "Имя уже записано на сервере";
+  await page.goto(`/projects/${PROJECT.id}`);
+  const save = page.getByRole("button", { name: "Сохранить", exact: true });
+  await expect(save).toBeDisabled();
+  await editCard(page, name);
+  await page.getByLabel(/Сумма контракта/).fill("12000");
+  await page.getByLabel(/Себестоимость/).fill("2500");
+  for (const [index, entry] of FINANCIAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
+  await save.click();
+  await expectPartialSave(page);
+  expect(state.current?.name).toBe(name);
+  expect(state.current?.financial_entries).toEqual(PROJECT.financial_entries);
+
+  // Возвращаем каждое изменённое поле и строку к baseline, без посторонней правки для разблокировки.
+  await page.getByLabel(/Название проекта/).fill(PROJECT.name);
+  await page.getByLabel("Суть проекта").fill(PROJECT.description);
+  await page.getByLabel("Планы на период").fill(PROJECT.period_plan);
+  await page.getByLabel(/Сумма контракта/).fill(String(Number(PROJECT.amount)));
+  await page.getByLabel(/Себестоимость/).fill(String(Number(PROJECT.cost)));
+  for (const [index, entry] of ORIGINAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
+  await expectFinancialRows(page, ORIGINAL_ROWS);
+  await expect(save).toBeEnabled();
+  await expectPartialSave(page);
+  expect(state.current?.name).toBe(name);
+  expect(state.updates).toHaveLength(1);
+  await save.click();
+  await expect(partialMessage(page)).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: PROJECT.name, exact: true })).toBeVisible();
+  await expect(save).toBeDisabled();
+  await page.reload();
+  await expect(page.getByLabel(/Название проекта/)).toHaveValue(PROJECT.name);
+  await expect(page.getByLabel("Суть проекта")).toHaveValue(PROJECT.description);
+  await expect(page.getByLabel("Планы на период")).toHaveValue(PROJECT.period_plan);
+  await expectFinancialRows(page, ORIGINAL_ROWS);
+  await expect(save).toBeDisabled();
+  expect(state.creates).toHaveLength(0);
+  expect(state.updates).toHaveLength(2);
+  expect(state.updates[1]).toEqual({
+    ...state.updates[0], name: PROJECT.name, description: PROJECT.description,
+    period_plan: PROJECT.period_plan, amount: PROJECT.amount, cost: PROJECT.cost,
+  });
+  expect(state.financialUpdates).toEqual([FINANCIAL_ROWS, ORIGINAL_ROWS]);
+  expect(state.reads.at(-1)?.name).toBe(PROJECT.name);
+  expect(state.current?.financial_entries).toHaveLength(ORIGINAL_ROWS.length);
   expect(state.unexpected).toEqual([]);
 });
