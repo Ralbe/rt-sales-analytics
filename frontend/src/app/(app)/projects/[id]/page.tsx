@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
 
 import { ProjectForm } from "@/components/ProjectForm";
+import { ProjectHistory } from "@/components/ProjectHistory";
 import { api } from "@/lib/api";
 import type { Project } from "@/lib/types";
 
@@ -27,6 +28,7 @@ export default function ProjectPage() {
       <div className="page-body">
         {error && <div className="alert">Проект не найден или нет доступа</div>}
         {project && <ProjectForm key={project.updated_at} project={project} />}
+        {project && !error && <ProjectHistory projectId={project.id} />}
       </div>
     </>
   );

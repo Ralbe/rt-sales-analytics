@@ -11,6 +11,7 @@ import { ClientCombobox } from "@/components/ClientCombobox";
 import { ApiError, api, post, put } from "@/lib/api";
 import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
+import { projectHistoryKey } from "@/lib/history-types";
 import type { FinancialEntry, Project, Stage } from "@/lib/types";
 
 const DRAFT_KEY = "project-draft";
@@ -254,24 +255,28 @@ function ProjectFormInner({ project }: { project?: Project }) {
       realized_work: v.realized_work,
       period_plan: v.period_plan,
     };
+    let savedProjectId: number | undefined;
     try {
       const saved = project
         ? await put<Project>(`/projects/${project.id}`, body)
         : await post<Project>("/projects", body);
-      await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
+      savedProjectId = saved.id;
+      const savedEntries = await put<FinancialEntry[]>(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
         kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
       })));
-      await queryClient.invalidateQueries();
+      const savedProject = { ...saved, financial_entries: savedEntries };
+      await queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "project-history" });
       if (isNew) {
         submittedRef.current = true;
         saveDraft(null);
         router.replace(`/projects/${saved.id}`);
       } else {
-        queryClient.setQueryData(["project", String(saved.id)], saved);
-        reset(fromProject(saved));
+        queryClient.setQueryData(["project", String(saved.id)], savedProject);
+        setFinancialEntries(financialRowsFromProject(savedProject));
+        reset(fromProject(savedProject));
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
     } catch (e) {
@@ -281,6 +286,11 @@ function ProjectFormInner({ project }: { project?: Project }) {
         setError((SERVER_FIELD[f] ?? f) as keyof FormValues, { type: "server", message }),
       );
       if (!fields.length || e.fields._form) setFormError(e.message);
+    } finally {
+      // Карточка могла сохраниться, даже если следующий запрос финансов завершился ошибкой.
+      if (savedProjectId !== undefined) {
+        await queryClient.invalidateQueries({ queryKey: projectHistoryKey(savedProjectId) });
+      }
     }
   });
 
