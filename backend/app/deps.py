@@ -3,7 +3,7 @@ from collections.abc import Callable
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.security import ACCESS_COOKIE, SCOPE_ACCESS, decode_token
+from app.core.security import ACCESS_COOKIE, SCOPE_ACCESS, decode_token_context
 from app.db import get_db
 from app.models import Role, User
 
@@ -17,9 +17,9 @@ DASHBOARD_PUBLISHERS = DASHBOARD_EDITORS
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     token = request.cookies.get(ACCESS_COOKIE)
-    user_id = decode_token(token, SCOPE_ACCESS) if token else None
-    user = db.get(User, user_id) if user_id else None
-    if user is None or not user.is_active:
+    context = decode_token_context(token, SCOPE_ACCESS) if token else None
+    user = db.get(User, context[0]) if context is not None else None
+    if user is None or not user.is_active or user.auth_version != context[1]:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется вход в систему")
     return user
 

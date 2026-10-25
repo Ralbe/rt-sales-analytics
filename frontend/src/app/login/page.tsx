@@ -9,10 +9,12 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ApiError, post } from "@/lib/api";
+import { isValidUserEmail } from "@/lib/email";
 import type { User } from "@/lib/types";
 
 const credentialsSchema = z.object({
-  email: z.string().trim().min(1, "Введите email").email("Некорректный email"),
+  email: z.string().trim().min(1, "Введите email")
+    .max(255, "Email должен содержать не более 255 символов").refine(isValidUserEmail, "Некорректный email"),
   password: z.string().min(1, "Введите пароль"),
 });
 const codeSchema = z.object({ code: z.string().regex(/^\d{6}$/, "Код — 6 цифр из приложения") });
@@ -61,7 +63,7 @@ function CredentialsStep({ onDone }: { onDone: (r: LoginResponse) => void }) {
       {error && <div className="alert">{error}</div>}
       <div className={`field ${errors.email ? "has-error" : ""}`}>
         <label htmlFor="email">Email</label>
-        <input id="email" className="input" type="email" autoComplete="username" autoFocus {...register("email")} />
+        <input id="email" className="input" type="email" maxLength={255} autoComplete="username" autoFocus {...register("email")} />
         <div className="error">{errors.email?.message}</div>
       </div>
       <div className={`field ${errors.password ? "has-error" : ""}`}>

@@ -46,6 +46,7 @@ router = APIRouter(prefix="/users", tags=["users"], route_class=UserRoute)
 
 
 def _lock_users(db: Session, actor: User) -> None:
+    auth_version = actor.auth_version
     # Блокировка до чтения инварианта сериализует создание, смену роли и отключение.
     # SHARE ROW EXCLUSIVE конфликтует с собой и UPDATE, но разрешает обычное чтение.
     if db.get_bind().dialect.name == "postgresql":
@@ -55,7 +56,7 @@ def _lock_users(db: Session, actor: User) -> None:
         db.execute(update(User).where(User.id == actor.id).values(is_active=User.is_active))
     # Права могли измениться, пока запрос ожидал блокировку.
     db.refresh(actor)
-    if not actor.is_active:
+    if not actor.is_active or actor.auth_version != auth_version:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется вход в систему")
     if actor.role != Role.admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
@@ -141,6 +142,8 @@ def update_user(
             raise HTTPException(409, {"field": "role", "message": "Нужен хотя бы один активный администратор"})
     _check_email(db, data.email, exclude_id=user.id)
     before = _public_fields(user)
+    if user.is_active and not data.is_active:
+        user.auth_version += 1
     for field, value in data.model_dump().items():
         setattr(user, field, value)
     try:

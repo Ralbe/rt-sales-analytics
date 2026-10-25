@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ApiError, type FieldErrors } from "@/lib/api";
+import { isValidUserEmail } from "@/lib/email";
 import { ROLE_LABELS } from "@/lib/hooks";
 import type { Role } from "@/lib/types";
 import type { ManagedUser, UserSubmission } from "@/lib/user-types";
@@ -56,7 +57,7 @@ export function UserDialog({ user, currentUserId, onSave, onClose }: Props) {
           const errors: FieldErrors = {};
           const normalizedEmail = email.trim().toLowerCase();
           const normalizedName = fullName.trim().replace(/\s+/g, " ");
-          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail) || normalizedEmail.length > 255) {
+          if (!isValidUserEmail(normalizedEmail)) {
             errors.email = "Введите корректный email (не более 255 символов)";
           }
           if (!normalizedName || normalizedName.length > 200) {
