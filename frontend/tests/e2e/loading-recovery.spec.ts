@@ -421,3 +421,115 @@ test("справочники: повтор без сети показывает 
   await expect(page.getByLabel(/Название проекта/)).toBeVisible();
   await expect(error).toHaveCount(0);
 });
+
+test("L01: ресурс 401 скрывает dirty-дашборд даже при отмене beforeunload", async ({ page }) => {
+  let expired = false;
+  let meRequests = 0;
+  let unloadDialogs = 0;
+  const dashboard: Dashboard = {
+    ...DASHBOARD,
+    widgets: [{ id: "projects", type: "projects", title: "Защищённые проекты", x: 0, y: 0, w: 8, h: 6, config: { limit: 5 } }],
+  };
+  await page.clock.install();
+  await mockApi(page, {
+    "/auth/me": (route) => {
+      meRequests++;
+      return route.fulfill({ json: USER });
+    },
+    "/dashboards/7": (route) => route.fulfill(expired
+      ? { status: 401, json: { detail: "Сессия истекла" } }
+      : { json: dashboard }),
+  });
+  page.on("dialog", async (dialog) => {
+    if (dialog.type() === "beforeunload") unloadDialogs++;
+    await dialog.dismiss();
+  });
+  await page.goto("/dashboards/7");
+  await expect(page.getByRole("cell", { name: PROJECT.name, exact: true })).toBeVisible();
+  await page.getByLabel("Название дашборда").fill("Несохранённое название");
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeEnabled();
+
+  // Подтверждаем, что отмена ухода действительно удерживает открытый dirty-редактор.
+  await page.evaluate(() => { window.location.href = "/login"; });
+  await expect.poll(() => unloadDialogs).toBe(1);
+  await expect(page.getByLabel("Название дашборда")).toHaveValue("Несохранённое название");
+
+  expired = true;
+  // Дашборд уже устарел, а успешный me ещё свежий: его 401 здесь не маскирует дефект.
+  await page.clock.fastForward(35_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(page.getByLabel("Название дашборда")).toHaveCount(0);
+  await expect(page.getByText("Защищённые проекты", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("cell", { name: PROJECT.name, exact: true })).toHaveCount(0);
+  await page.waitForURL(/\/login$/);
+  await expect(page.getByRole("heading", { name: "Вход в систему" })).toBeVisible();
+  expect(unloadDialogs).toBe(1);
+  expect(meRequests).toBe(1);
+});
+
+test("L02: общий дашборд сохраняет фильтры просмотра после 503 и повтора", async ({ page }) => {
+  let failing = false;
+  let unloadDialogs = 0;
+  const widgetRequests: URL[] = [];
+  let dashboard: Dashboard = {
+    ...DASHBOARD,
+    owner: { id: 9, full_name: "Автор общего дашборда" },
+    editable: false,
+    is_shared: true,
+    widgets: [{ id: "projects", type: "projects", title: "Проекты общего дашборда", x: 0, y: 0, w: 8, h: 6, config: { limit: 5 } }],
+  };
+  await page.clock.install();
+  await mockApi(page, {
+    "/dashboards": (route) => route.fulfill({ json: [dashboard] }),
+    "/dashboards/7": (route) => failing ? unavailable(route) : route.fulfill({ json: dashboard }),
+    "/projects": (route) => {
+      widgetRequests.push(new URL(route.request().url()));
+      return route.fulfill({ json: { items: [PROJECT], total: 1, page: 1, size: 5 } });
+    },
+  }, "user");
+  page.on("dialog", async (dialog) => {
+    if (dialog.type() === "beforeunload") unloadDialogs++;
+    await dialog.dismiss();
+  });
+  await page.goto("/dashboards/7");
+  const main = page.getByRole("main");
+  await main.getByRole("button", { name: /Сегменты: все/ }).click();
+  await main.getByRole("checkbox", { name: REFS.segments[0].name, exact: true }).check();
+  await main.getByRole("button", { name: new RegExp(REFS.segments[0].name) }).click();
+  await main.getByRole("button", { name: /Услуги: все/ }).click();
+  await main.getByRole("checkbox", { name: "Интернет", exact: true }).check();
+  await main.getByRole("button", { name: /Интернет/ }).click();
+  await expect.poll(() => widgetRequests.at(-1)?.searchParams.get("segment_id")).toBe("2");
+  await expect.poll(() => widgetRequests.at(-1)?.searchParams.get("service_id")).toBe("3");
+  await expect(main.getByRole("button", { name: "Сохранить", exact: true })).toHaveCount(0);
+  await expect(main.getByRole("button", { name: "Отменить", exact: true })).toHaveCount(0);
+
+  failing = true;
+  await reconnectWithStaleData(page);
+  const error = mainAlert(page, "Не удалось обновить дашборд");
+  await expect(error).toContainText("503");
+  dashboard = {
+    ...dashboard,
+    name: "Общий дашборд после обновления",
+    updated_at: "2026-10-25T10:00:00Z",
+    widgets: dashboard.widgets.map((widget) => ({ ...widget, config: { limit: 10 } })),
+  };
+  failing = false;
+  await error.getByRole("button", { name: "Повторить", exact: true }).click();
+  await expect(error).toHaveCount(0);
+  await expect(main.getByRole("heading", { name: /Общий дашборд после обновления/ })).toBeVisible();
+  await expect(main.getByRole("button", { name: new RegExp(REFS.segments[0].name) })).toBeVisible();
+  await expect(main.getByRole("button", { name: /Интернет/ })).toBeVisible();
+  await expect.poll(() => widgetRequests.at(-1)?.searchParams.get("size")).toBe("10");
+  expect(widgetRequests.at(-1)?.searchParams.get("segment_id")).toBe("2");
+  expect(widgetRequests.at(-1)?.searchParams.get("service_id")).toBe("3");
+  await expect(main.getByRole("button", { name: "Сохранить", exact: true })).toHaveCount(0);
+
+  // Временная выборка просмотра не должна включать предупреждение о несохранённых правках.
+  await page.goto("/projects");
+  await expect(page.getByRole("heading", { name: "Проекты", exact: true })).toBeVisible();
+  expect(unloadDialogs).toBe(0);
+});

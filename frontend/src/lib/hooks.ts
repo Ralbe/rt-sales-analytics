@@ -6,8 +6,8 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { Refs, Role, User } from "./types";
 
-export function useMe() {
-  return useQuery({ queryKey: ["me"], queryFn: () => api<User>("/auth/me"), retry: false, staleTime: 60_000 });
+export function useMe(enabled = true) {
+  return useQuery({ queryKey: ["me"], queryFn: () => api<User>("/auth/me"), enabled, retry: false, staleTime: 60_000 });
 }
 
 export function useRefs() {
