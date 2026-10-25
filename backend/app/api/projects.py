@@ -1,9 +1,8 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -14,9 +13,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.core import cache
 from app.db import get_db
 from app.deps import PROJECT_EDITORS, get_current_user, manager_scope, require_roles
+from app.history_schemas import ProjectHistoryPage
 from app.models import (
     CLOSED_STAGES,
     STAGE_LABELS,
+    AuditLog,
     Client,
     Project,
     ProjectFinancialEntry,
@@ -35,6 +36,7 @@ from app.schemas import (
     ProjectPage,
 )
 from app.services import audit
+from app.services.project_history import financial_snapshot, history_items, project_snapshot, same_finances
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -47,6 +49,13 @@ SORT_FIELDS = {
 }
 SORT_PATTERN = r"^-?(name|amount|start_date|expected_close_date|updated_at)$"
 EXPORT_LIMIT = 10_000
+
+
+def _xlsx_timestamp(value: datetime) -> str:
+    # Excel не поддерживает tzinfo: явный ISO 8601 в UTC сохраняет смысл времени.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 def to_out(p: Project) -> dict:
@@ -205,7 +214,7 @@ def export_projects(
         "Статус проекта",
         "Сделано за период",
         "Планы на период",
-        "Создан",
+        "Создан (UTC)",
     ]
     ws.append(headers)
     for cell in ws[1]:
@@ -242,9 +251,13 @@ def export_projects(
                 p.project_status,
                 p.realized_work,
                 p.period_plan,
-                p.created_at,
+                _xlsx_timestamp(p.created_at),
             ]
         )
+        # Пользовательский текст должен оставаться текстом, даже если начинается с '='.
+        for cell in ws[ws.max_row]:
+            if cell.data_type == "f":
+                cell.data_type = "s"
     widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(headers) - 15)
     for index, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
@@ -269,6 +282,26 @@ def _get_visible(db: Session, project_id: int, user: User) -> Project:
 @router.get("/{project_id}", response_model=ProjectOut)
 def get_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     return to_out(_get_visible(db, project_id, user))
+
+
+@router.get("/{project_id}/history", response_model=ProjectHistoryPage)
+def get_project_history(
+    project_id: int,
+    limit: int = Query(default=10, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    _get_visible(db, project_id, user)
+    rows = db.execute(
+        select(AuditLog, User.full_name)
+        .outerjoin(User, User.id == AuditLog.user_id)
+        .where(AuditLog.entity == "project", AuditLog.entity_id == project_id)
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .offset(offset)
+        .limit(limit + 1)
+    ).all()
+    return {"items": history_items(db, rows[:limit]), "limit": limit, "offset": offset, "has_more": len(rows) > limit}
 
 
 def _find_duplicate(db: Session, name: str, client_id: int, exclude_id: int | None) -> Project | None:
@@ -342,7 +375,10 @@ def create_project(
     _apply(db, project, data, user)
     db.add(project)
     db.flush()
-    audit.record(db, user.id, "create", "project", project.id, name=project.name)
+    audit.record(
+        db, user.id, "create", "project", project.id,
+        name=project.name, after=project_snapshot(db, project), author_name=user.full_name,
+    )
     db.commit()
     cache.bump("analytics")
     db.refresh(project)
@@ -357,22 +393,20 @@ def update_project(
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
     project = _get_visible(db, project_id, user)
-    before = _audit_snapshot(project)
+    before = project_snapshot(db, project)
     _apply(db, project, data, user)
-    audit.record(db, user.id, "update", "project", project.id, before=before, after=_audit_snapshot(project))
+    after = project_snapshot(db, project)
+    if {key: value for key, value in before.items() if key != "_labels"} != {
+        key: value for key, value in after.items() if key != "_labels"
+    }:
+        audit.record(
+            db, user.id, "update", "project", project.id,
+            before=before, after=after, author_name=user.full_name,
+        )
     db.commit()
     cache.bump("analytics")
     db.refresh(project)
     return to_out(project)
-
-
-def _audit_snapshot(project: Project) -> dict:
-    """Capture editable fields with exact decimal values for the project history."""
-    fields = (*ProjectIn.model_fields, "closed_at")
-    return jsonable_encoder(
-        {field: getattr(project, field) for field in fields},
-        custom_encoder={Decimal: str},
-    )
 
 
 @router.put("/{project_id}/financial-entries", response_model=list[ProjectFinancialEntryOut])
@@ -401,23 +435,14 @@ def replace_financial_entries(
                 raise HTTPException(
                     422, {"field": field, "message": "Справочник не соответствует типу финансовой строки"}
                 )
-            if field == "status_id" and ref is None:
-                raise HTTPException(422, {"field": field, "message": "Укажите статус"})
+            if ref is None:
+                raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
             row_refs[field] = ref
         references.append(row_refs)
-    before = [
-        {
-            "kind": row.kind,
-            "year": row.year,
-            "month": row.month,
-            "amount": str(row.amount),
-            "vat_included": row.vat_included,
-            "status_id": row.status_id,
-            "article_id": row.article_id,
-            "cost_type_id": row.cost_type_id,
-        }
-        for row in project.financial_entries
-    ]
+    before = [financial_snapshot(row) for row in project.financial_entries]
+    after = [financial_snapshot(entry, ref) for entry, ref in zip(entries, references, strict=True)]
+    if same_finances(before, after):
+        return project.financial_entries
     project.financial_entries.clear()
     db.flush()
     project.financial_entries.extend(
@@ -428,11 +453,12 @@ def replace_financial_entries(
             amount=entry.amount,
             vat_included=entry.vat_included,
             status=ref["status_id"],
-            article=ref["article_id"],
-            cost_type=ref["cost_type_id"],
+            article=ref.get("article_id"),
+            cost_type=ref.get("cost_type_id"),
         )
         for entry, ref in zip(entries, references, strict=True)
     )
+    project.updated_at = func.now()
     audit.record(
         db,
         user.id,
@@ -440,7 +466,8 @@ def replace_financial_entries(
         "project",
         project.id,
         before=before,
-        after=[entry.model_dump(mode="json") for entry in entries],
+        after=after,
+        author_name=user.full_name,
     )
     db.commit()
     db.refresh(project)

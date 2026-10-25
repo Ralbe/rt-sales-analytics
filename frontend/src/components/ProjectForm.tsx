@@ -8,9 +8,11 @@ import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ClientCombobox } from "@/components/ClientCombobox";
+import { QueryState } from "@/components/QueryState";
 import { ApiError, api, post, put } from "@/lib/api";
 import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
+import { projectHistoryKey } from "@/lib/history-types";
 import type { FinancialEntry, Project, Stage } from "@/lib/types";
 
 const DRAFT_KEY = "project-draft";
@@ -36,7 +38,7 @@ const schema = z
       .refine((v) => v !== null, "Выберите клиента из списка или создайте нового"),
     service_id: z.string().min(1, "Выберите услугу"),
     manager_id: z.string().min(1, "Выберите ответственного"),
-    stage: z.enum(STAGES, { errorMap: () => ({ message: "Выберите стадию" }) }),
+    stage: z.enum(STAGES, { error: "Выберите стадию" }),
     customer_stage_id: z.string(),
     payment_type_id: z.string(),
     indicator_id: z.string(),
@@ -133,10 +135,20 @@ function saveDraft(values: FormValues | null) {
 }
 
 export function ProjectForm({ project }: { project?: Project }) {
-  const { data: refs } = useRefs();
+  const refsQuery = useRefs();
   // Ждём справочники: иначе выпадающие списки не смогут показать восстановленные значения
-  if (!refs) return <div className="muted">Загрузка…</div>;
-  return <ProjectFormInner project={project} />;
+  return (
+    <>
+      <QueryState
+        query={refsQuery}
+        title="Не удалось загрузить справочники"
+        loadingText="Загружаем справочники…"
+        empty={refsQuery.data?.services.length === 0}
+        emptyText="В справочнике пока нет доступных услуг."
+      />
+      {refsQuery.data && <ProjectFormInner project={project} />}
+    </>
+  );
 }
 
 function ProjectFormInner({ project }: { project?: Project }) {
@@ -152,8 +164,12 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const [nameTaken, setNameTaken] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(() => financialRowsFromProject(project));
-  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialRowsFromProject(project));
+  const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
+  const [pendingSave, setPendingSave] = useState(false);
+  const persistedId = project?.id ?? pendingProjectId;
+  const financialBaseline = useRef(financialRowsFromProject(project));
+  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(financialBaseline.current);
+  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialBaseline.current);
 
   const { register, control, handleSubmit, reset, setValue, setError, trigger, getValues, watch, formState } =
     useForm<FormValues>({
@@ -162,6 +178,15 @@ function ProjectFormInner({ project }: { project?: Project }) {
       defaultValues: fromProject(project, me?.id),
     });
   const { errors, isSubmitting, isDirty, dirtyFields, touchedFields } = formState;
+  const hasUnsavedChanges = isDirty || financialDirty || pendingSave;
+
+  // Частично записанную карточку нельзя считать чистой даже после возврата к исходным полям.
+  useEffect(() => {
+    if (!project || hasUnsavedChanges || isSubmitting) return;
+    financialBaseline.current = financialRowsFromProject(project);
+    setFinancialEntries(financialBaseline.current);
+    reset(fromProject(project));
+  }, [project, hasUnsavedChanges, isSubmitting, reset]);
 
   // Восстановление черновика новой карточки
   useEffect(() => {
@@ -196,10 +221,10 @@ function ProjectFormInner({ project }: { project?: Project }) {
     const { name, client } = getValues();
     if (!client || name.trim().length < 3) return setNameTaken(false);
     const r = await api<{ available: boolean }>("/projects/check-name", {
-      query: { name: name.trim(), client_id: client.id, exclude_id: project?.id },
+      query: { name: name.trim(), client_id: client.id, exclude_id: persistedId },
     }).catch(() => ({ available: true }));
     setNameTaken(!r.available);
-  }, [getValues, project?.id]);
+  }, [getValues, persistedId]);
 
   useEffect(() => {
     if (values.client?.id) checkName();
@@ -254,37 +279,58 @@ function ProjectFormInner({ project }: { project?: Project }) {
       realized_work: v.realized_work,
       period_plan: v.period_plan,
     };
+    let savedProjectId: number | undefined;
+    let cardSaved = false;
     try {
-      const saved = project
-        ? await put<Project>(`/projects/${project.id}`, body)
+      const saved = persistedId
+        ? await put<Project>(`/projects/${persistedId}`, body)
         : await post<Project>("/projects", body);
+      savedProjectId = saved.id;
+      cardSaved = true;
+      setPendingSave(true);
+      if (isNew) setPendingProjectId(saved.id);
       await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
         kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
       })));
-      await queryClient.invalidateQueries();
+      const complete = await api<Project>(`/projects/${saved.id}`);
+      await queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "project-history" });
       if (isNew) {
         submittedRef.current = true;
         saveDraft(null);
         router.replace(`/projects/${saved.id}`);
       } else {
-        queryClient.setQueryData(["project", String(saved.id)], saved);
-        reset(fromProject(saved));
+        queryClient.setQueryData(["project", String(saved.id)], complete);
+        financialBaseline.current = financialRowsFromProject(complete);
+        setFinancialEntries(financialBaseline.current);
+        reset(fromProject(complete));
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
+      setPendingSave(false);
     } catch (e) {
-      if (!(e instanceof ApiError)) return setFormError("Сервер недоступен, попробуйте ещё раз");
+      const partial = cardSaved
+        ? "Карточка сохранена. Не удалось подтвердить сохранение финансовых строк. Повторите сохранение — новая карточка не создастся. "
+        : "";
+      if (!(e instanceof ApiError)) return setFormError(partial + "Сервер недоступен, попробуйте ещё раз");
       const fields = Object.entries(e.fields);
       fields.forEach(([f, message]) =>
         setError((SERVER_FIELD[f] ?? f) as keyof FormValues, { type: "server", message }),
       );
-      if (!fields.length || e.fields._form) setFormError(e.message);
+      if (partial || !fields.length || e.fields._form) setFormError(partial + e.message);
+    } finally {
+      // Карточка могла сохраниться, даже если следующий запрос финансов завершился ошибкой.
+      if (savedProjectId !== undefined) {
+        await queryClient.invalidateQueries({ queryKey: projectHistoryKey(savedProjectId) });
+      }
     }
   });
 
   const clearDraft = () => {
+    setPendingProjectId(null);
+    setPendingSave(false);
+    setFormError(null);
     saveDraft(null);
     reset(fromProject(undefined, me?.id));
     setDraftRestored(false);
@@ -304,12 +350,12 @@ function ProjectFormInner({ project }: { project?: Project }) {
       {draftRestored && (
         <div className="alert info" style={{ margin: "14px 20px 0", display: "flex", gap: 10, alignItems: "center" }}>
           Восстановлен несохранённый черновик.
-          <button type="button" className="btn small" onClick={clearDraft}>
+          <button type="button" className="btn small" disabled={readOnly || isSubmitting} onClick={clearDraft}>
             Начать заново
           </button>
         </div>
       )}
-      <fieldset disabled={readOnly} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+      <fieldset disabled={readOnly || isSubmitting} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
         <div className="form-grid">
           <div className="col">
             <div className={`field ${err("name") || nameTaken ? "has-error" : ""}`}>
@@ -331,7 +377,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
                     value={field.value}
                     onChange={field.onChange}
                     onBlur={field.onBlur}
-                    disabled={readOnly}
+                    disabled={readOnly || isSubmitting}
                     allowCreate={!readOnly}
                   />
                 )}
@@ -597,7 +643,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
         </div>
       </fieldset>
 
-      <fieldset className="fieldset" disabled={readOnly}>
+      <fieldset className="fieldset" disabled={readOnly || isSubmitting}>
         <legend>Помесячная выручка и затраты</legend>
         <p className="hint">Сумма вводится в тыс. ₽. Выберите, включает ли сумма НДС; налог автоматически не пересчитывается.</p>
         {financialEntries.map((entry, index) => {
@@ -640,15 +686,15 @@ function ProjectFormInner({ project }: { project?: Project }) {
             Исправьте поля, отмеченные красным: {errorCount}
           </span>
         )}
-        {savedAt && !isDirty && <span className="ok" style={{ color: "var(--good)" }}>Сохранено в {savedAt}</span>}
+        {savedAt && !hasUnsavedChanges && !isSubmitting && <span className="ok" style={{ color: "var(--good)" }}>Сохранено в {savedAt}</span>}
         {isNew && isDirty && <span className="muted" style={{ fontSize: 12 }}>Черновик сохраняется автоматически</span>}
         <div className="spacer" />
         <button type="button" className="btn" onClick={() => router.push("/projects")}>
           К списку
         </button>
         {!readOnly && (
-          <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !isDirty && !financialDirty)}>
-            {isSubmitting ? "Сохраняем…" : isNew ? "Создать проект" : "Сохранить"}
+          <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !hasUnsavedChanges)}>
+            {isSubmitting ? "Сохраняем…" : isNew ? pendingProjectId ? "Повторить сохранение" : "Создать проект" : "Сохранить"}
           </button>
         )}
       </div>

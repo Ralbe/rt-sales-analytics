@@ -5,10 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import GridLayout, { type Layout } from "react-grid-layout";
 
+import { DashboardPrint } from "@/components/dashboard/DashboardPrint";
 import { WidgetCard } from "@/components/dashboard/WidgetCard";
 import { WidgetDialog } from "@/components/dashboard/WidgetDialog";
 import { newWidget } from "@/components/dashboard/catalog";
 import { MultiSelect } from "@/components/MultiSelect";
+import { QueryState } from "@/components/QueryState";
 import { ApiError, api, del, post, put } from "@/lib/api";
 import { canConfigureDashboards, canPublishDashboards, seesAllProjects, useMe, useRefs } from "@/lib/hooks";
 import type { Dashboard, DashboardFilters, Widget } from "@/lib/types";
@@ -35,22 +37,29 @@ function useSize<T extends HTMLElement>() {
 
 export default function DashboardPage() {
   const { id } = useParams<{ id: string }>();
-  const { data: dashboard, error } = useQuery({
+  const dashboardQuery = useQuery({
     queryKey: ["dashboard", id],
     queryFn: () => api<Dashboard>(`/dashboards/${id}`),
   });
-  if (error) return <div className="page-body"><div className="alert" style={{ marginTop: 20 }}>Дашборд не найден</div></div>;
-  if (!dashboard) return <div className="page-body muted" style={{ paddingTop: 24 }}>Загрузка…</div>;
-  return <DashboardEditor key={dashboard.id + dashboard.updated_at} dashboard={dashboard} />;
+  const dashboard = dashboardQuery.data;
+  if (!dashboard) return <div className="page-body" style={{ paddingTop: 24 }}><QueryState query={dashboardQuery} title="Не удалось загрузить дашборд" /></div>;
+  return (
+    <>
+      <QueryState query={dashboardQuery} title="Не удалось обновить дашборд" />
+      <DashboardEditor key={dashboard.id} dashboard={dashboard} />
+    </>
+  );
 }
 
 function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: me } = useMe();
-  const { data: refs } = useRefs();
+  const refsQuery = useRefs();
+  const refs = refsQuery.data;
   const [widgets, setWidgets] = useState<Widget[]>(dashboard.widgets);
   const [filters, setFilters] = useState<DashboardFilters>({ ...EMPTY_FILTERS, ...dashboard.filters });
+  const filtersChanged = useRef(false);
   const [name, setName] = useState(dashboard.name);
   const [shared, setShared] = useState(dashboard.is_shared);
   const [dirty, setDirty] = useState(false);
@@ -61,6 +70,15 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
 
   const editable = dashboard.editable;
   const rowHeight = Math.max(32, (size.height - MARGIN * (ROWS + 1)) / ROWS);
+
+  // Обновляем чистый редактор, не затирая несохранённые правки при refetch.
+  useEffect(() => {
+    if (dirty) return;
+    setWidgets(dashboard.widgets);
+    if (!filtersChanged.current) setFilters({ ...EMPTY_FILTERS, ...dashboard.filters });
+    setName(dashboard.name);
+    setShared(dashboard.is_shared);
+  }, [dashboard, dirty]);
 
   // Предупреждение о несохранённых изменениях при закрытии вкладки
   useEffect(() => {
@@ -90,6 +108,11 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
     setError(null);
     try {
       const saved = await put<Dashboard>(`/dashboards/${dashboard.id}`, { name, widgets, filters, is_shared: shared });
+      setWidgets(saved.widgets);
+      setFilters({ ...EMPTY_FILTERS, ...saved.filters });
+      filtersChanged.current = false;
+      setName(saved.name);
+      setShared(saved.is_shared);
       setDirty(false);
       queryClient.setQueryData(["dashboard", String(dashboard.id)], saved);
       await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
@@ -101,6 +124,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   };
 
   const reset = () => {
+    filtersChanged.current = false;
     setWidgets(dashboard.widgets);
     setFilters({ ...EMPTY_FILTERS, ...dashboard.filters });
     setName(dashboard.name);
@@ -122,6 +146,8 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   };
 
   const setFilter = (key: keyof DashboardFilters) => (value: number[]) => {
+    // Фильтры просмотра сохраняются локально и не дают права редактировать общий дашборд.
+    filtersChanged.current = true;
     setFilters((f) => ({ ...f, [key]: value }));
     if (editable) setDirty(true);
   };
@@ -162,6 +188,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
           )}
         </div>
         <div className="spacer" />
+        <DashboardPrint name={name} widgets={widgets} filters={filters} />
         {error && <span className="alert">{error}</span>}
         {editable ? (
           <>
@@ -201,6 +228,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
       </div>
 
       <div className="page-body" style={{ padding: "0 10px 0" }}>
+        <QueryState query={refsQuery} title="Не удалось загрузить справочники фильтров" loadingText="Загружаем справочники фильтров…" />
         <div className="grid-host" ref={hostRef}>
           {widgets.length === 0 && (
             <div className="muted" style={{ padding: 20 }}>

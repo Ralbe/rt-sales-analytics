@@ -41,6 +41,7 @@ export function MultiSelect<T extends Option>({ label, options, value, onChange 
       </button>
       {open && (
         <div className="card ms-panel">
+          {options.length === 0 && <div className="muted">Нет доступных значений</div>}
           {options.map((o) => (
             <label key={o.id}>
               <input type="checkbox" checked={value.includes(o.id)} onChange={() => toggle(o.id)} />

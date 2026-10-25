@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { QueryState } from "@/components/QueryState";
 import { ApiError, api, post } from "@/lib/api";
 import { useDebounced, useRefs } from "@/lib/hooks";
 import { innIsValid } from "@/lib/inn";
@@ -35,11 +36,12 @@ export function ClientCombobox({ id, value, onChange, onBlur, disabled, allowCre
 
   useEffect(() => setText(value?.name ?? ""), [value?.id, value?.name]);
 
-  const { data: options = [] } = useQuery({
+  const clientsQuery = useQuery({
     queryKey: ["clients", q],
     queryFn: () => api<ClientItem[]>("/clients", { query: { q, limit: 10 } }),
     enabled: open,
   });
+  const options = clientsQuery.data ?? [];
 
   useEffect(() => {
     if (!open) return;
@@ -99,8 +101,10 @@ export function ClientCombobox({ id, value, onChange, onBlur, disabled, allowCre
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
       />
-      {open && !disabled && count > 0 && (
+      {open && !disabled && (
         <div className="card combo-list">
+          <QueryState query={clientsQuery} title="Не удалось загрузить клиентов" loadingText="Ищем клиентов…" />
+          {!clientsQuery.error && clientsQuery.data?.length === 0 && <div className="muted">Клиенты не найдены</div>}
           {options.map((c, i) => (
             <button type="button" key={c.id} className={i === hl ? "hl" : ""} onMouseDown={(e) => e.preventDefault()} onClick={() => select(c)}>
               <span>{c.name}</span>
@@ -145,13 +149,15 @@ function CreateClientDialog({
   onClose: () => void;
   onCreated: (c: ClientItem) => void;
 }) {
-  const { data: refs } = useRefs();
+  const refsQuery = useRefs();
+  const refs = refsQuery.data;
   const [name, setName] = useState(initialName);
   const [inn, setInn] = useState(initialInn);
   const [segment, setSegment] = useState("");
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Проверка каждого поля сразу, а не после нажатия «Создать»
   const errors: Record<string, string | undefined> = {
@@ -166,12 +172,14 @@ function CreateClientDialog({
     e.preventDefault();
     e.stopPropagation();
     setTouched({ name: true, inn: true, segment_id: true });
-    if (!valid) return;
+    if (!valid || !refs) return;
     setBusy(true);
+    setFormError(null);
     try {
       onCreated(await post<ClientItem>("/clients", { name, inn, segment_id: Number(segment) }));
     } catch (err) {
       if (err instanceof ApiError) setServerErrors(err.fields);
+      setFormError(err instanceof ApiError ? err.message : "Не удалось создать клиента. Повторите попытку.");
     } finally {
       setBusy(false);
     }
@@ -182,9 +190,18 @@ function CreateClientDialog({
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <form className="card modal" onSubmit={submit}>
         <h2>Новый клиент</h2>
+        <QueryState
+          query={refsQuery}
+          title="Не удалось загрузить справочники"
+          loadingText="Загружаем справочники…"
+          empty={refs?.segments.length === 0}
+          emptyText="В справочнике пока нет доступных сегментов."
+        />
+        {formError && <div className="alert" role="alert">{formError}</div>}
         <div className={`field ${show("name") ? "has-error" : ""}`}>
-          <label>Название <span className="req">*</span></label>
+          <label htmlFor="new-client-name">Название <span className="req">*</span></label>
           <input
+            id="new-client-name"
             className="input"
             value={name}
             autoFocus={!initialName}
@@ -197,8 +214,9 @@ function CreateClientDialog({
           <div className="error">{show("name")}</div>
         </div>
         <div className={`field ${show("inn") ? "has-error" : ""}`}>
-          <label>ИНН <span className="req">*</span></label>
+          <label htmlFor="new-client-inn">ИНН <span className="req">*</span></label>
           <input
+            id="new-client-inn"
             className="input"
             value={inn}
             inputMode="numeric"
@@ -212,9 +230,10 @@ function CreateClientDialog({
           />
           {show("inn") ? <div className="error">{show("inn")}</div> : <div className="ok">{innIsValid(inn) ? "ИНН корректен" : ""}</div>}
         </div>
-        <div className={`field ${show("segment_id") ? "has-error" : ""}`}>
-          <label>Сегмент <span className="req">*</span></label>
+        {refs && <div className={`field ${show("segment_id") ? "has-error" : ""}`}>
+          <label htmlFor="new-client-segment">Сегмент <span className="req">*</span></label>
           <select
+            id="new-client-segment"
             className="select"
             value={segment}
             onChange={(e) => setSegment(e.target.value)}
@@ -228,12 +247,12 @@ function CreateClientDialog({
             ))}
           </select>
           <div className="error">{show("segment_id")}</div>
-        </div>
+        </div>}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>
             Отмена
           </button>
-          <button type="submit" className="btn primary" disabled={busy}>
+          <button type="submit" className="btn primary" disabled={busy || !refs}>
             Создать
           </button>
         </div>

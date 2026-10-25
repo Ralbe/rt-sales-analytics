@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import analytics, auth, clients, dashboards, projects, refs
+from app.api import analytics, auth, clients, dashboards, projects, refs, users
 from app.core.config import settings
 from app.telemetry import configure_tracing
 
@@ -38,7 +38,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-for module in (auth, refs, clients, projects, analytics, dashboards):
+for module in (auth, refs, clients, projects, analytics, dashboards, users):
     app.include_router(module.router, prefix="/api")
 
 
