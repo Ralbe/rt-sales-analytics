@@ -38,7 +38,7 @@ const schema = z
       .refine((v) => v !== null, "Выберите клиента из списка или создайте нового"),
     service_id: z.string().min(1, "Выберите услугу"),
     manager_id: z.string().min(1, "Выберите ответственного"),
-    stage: z.enum(STAGES, { errorMap: () => ({ message: "Выберите стадию" }) }),
+    stage: z.enum(STAGES, { error: "Выберите стадию" }),
     customer_stage_id: z.string(),
     payment_type_id: z.string(),
     indicator_id: z.string(),
