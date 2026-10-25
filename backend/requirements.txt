@@ -15,3 +15,6 @@ numpy==2.2.1
 statsmodels==0.14.4
 openpyxl==3.1.5
 prometheus-fastapi-instrumentator==7.0.0
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1

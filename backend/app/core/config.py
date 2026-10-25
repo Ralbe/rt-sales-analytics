@@ -1,3 +1,6 @@
+from typing import Literal
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +21,12 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 300
     login_attempts_limit: int = 10
     login_attempts_window_seconds: int = 300
+
+    # Трассировка отключена по умолчанию; экспортёр включается только явно.
+    otel_traces_exporter: Literal["none", "otlp"] = "none"
+    otel_traces_sampler: Literal["parentbased_traceidratio"] = "parentbased_traceidratio"
+    otel_service_name: str = "rt-analytics-api"
+    otel_traces_sampler_arg: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 settings = Settings()
