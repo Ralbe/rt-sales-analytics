@@ -153,9 +153,11 @@ function ProjectFormInner({ project }: { project?: Project }) {
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
+  const [pendingSave, setPendingSave] = useState(false);
   const persistedId = project?.id ?? pendingProjectId;
-  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(() => financialRowsFromProject(project));
-  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialRowsFromProject(project));
+  const financialBaseline = useRef(financialRowsFromProject(project));
+  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(financialBaseline.current);
+  const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialBaseline.current);
 
   const { register, control, handleSubmit, reset, setValue, setError, trigger, getValues, watch, formState } =
     useForm<FormValues>({
@@ -164,6 +166,15 @@ function ProjectFormInner({ project }: { project?: Project }) {
       defaultValues: fromProject(project, me?.id),
     });
   const { errors, isSubmitting, isDirty, dirtyFields, touchedFields } = formState;
+  const hasUnsavedChanges = isDirty || financialDirty || pendingSave;
+
+  // Частично записанную карточку нельзя считать чистой даже после возврата к исходным полям.
+  useEffect(() => {
+    if (!project || hasUnsavedChanges || isSubmitting) return;
+    financialBaseline.current = financialRowsFromProject(project);
+    setFinancialEntries(financialBaseline.current);
+    reset(fromProject(project));
+  }, [project, hasUnsavedChanges, isSubmitting, reset]);
 
   // Восстановление черновика новой карточки
   useEffect(() => {
@@ -262,6 +273,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
         ? await put<Project>(`/projects/${persistedId}`, body)
         : await post<Project>("/projects", body);
       cardSaved = true;
+      setPendingSave(true);
       if (isNew) setPendingProjectId(saved.id);
       await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
         kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
@@ -277,9 +289,12 @@ function ProjectFormInner({ project }: { project?: Project }) {
         router.replace(`/projects/${saved.id}`);
       } else {
         queryClient.setQueryData(["project", String(saved.id)], complete);
+        financialBaseline.current = financialRowsFromProject(complete);
+        setFinancialEntries(financialBaseline.current);
         reset(fromProject(complete));
         setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       }
+      setPendingSave(false);
     } catch (e) {
       const partial = cardSaved
         ? "Карточка сохранена. Не удалось подтвердить сохранение финансовых строк. Повторите сохранение — новая карточка не создастся. "
@@ -295,6 +310,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
 
   const clearDraft = () => {
     setPendingProjectId(null);
+    setPendingSave(false);
     setFormError(null);
     saveDraft(null);
     reset(fromProject(undefined, me?.id));
@@ -315,12 +331,12 @@ function ProjectFormInner({ project }: { project?: Project }) {
       {draftRestored && (
         <div className="alert info" style={{ margin: "14px 20px 0", display: "flex", gap: 10, alignItems: "center" }}>
           Восстановлен несохранённый черновик.
-          <button type="button" className="btn small" onClick={clearDraft}>
+          <button type="button" className="btn small" disabled={readOnly || isSubmitting} onClick={clearDraft}>
             Начать заново
           </button>
         </div>
       )}
-      <fieldset disabled={readOnly} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+      <fieldset disabled={readOnly || isSubmitting} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
         <div className="form-grid">
           <div className="col">
             <div className={`field ${err("name") || nameTaken ? "has-error" : ""}`}>
@@ -342,7 +358,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
                     value={field.value}
                     onChange={field.onChange}
                     onBlur={field.onBlur}
-                    disabled={readOnly}
+                    disabled={readOnly || isSubmitting}
                     allowCreate={!readOnly}
                   />
                 )}
@@ -608,7 +624,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
         </div>
       </fieldset>
 
-      <fieldset className="fieldset" disabled={readOnly}>
+      <fieldset className="fieldset" disabled={readOnly || isSubmitting}>
         <legend>Помесячная выручка и затраты</legend>
         <p className="hint">Сумма вводится в тыс. ₽. Выберите, включает ли сумма НДС; налог автоматически не пересчитывается.</p>
         {financialEntries.map((entry, index) => {
@@ -651,14 +667,14 @@ function ProjectFormInner({ project }: { project?: Project }) {
             Исправьте поля, отмеченные красным: {errorCount}
           </span>
         )}
-        {savedAt && !isDirty && <span className="ok" style={{ color: "var(--good)" }}>Сохранено в {savedAt}</span>}
+        {savedAt && !hasUnsavedChanges && !isSubmitting && <span className="ok" style={{ color: "var(--good)" }}>Сохранено в {savedAt}</span>}
         {isNew && isDirty && <span className="muted" style={{ fontSize: 12 }}>Черновик сохраняется автоматически</span>}
         <div className="spacer" />
         <button type="button" className="btn" onClick={() => router.push("/projects")}>
           К списку
         </button>
         {!readOnly && (
-          <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !isDirty && !financialDirty)}>
+          <button type="submit" className="btn primary" disabled={isSubmitting || nameTaken || (!isNew && !hasUnsavedChanges)}>
             {isSubmitting ? "Сохраняем…" : isNew ? pendingProjectId ? "Повторить сохранение" : "Создать проект" : "Сохранить"}
           </button>
         )}
