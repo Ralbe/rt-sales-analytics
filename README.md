@@ -13,6 +13,22 @@ docker compose up --build
 
 Мониторинг (Prometheus + Grafana): `docker compose --profile monitoring up -d`, Grafana: http://localhost:3001.
 
+### Трассировка запросов (опционально)
+
+API поддерживает экспорт HTTP-трасс через OTLP/HTTP. По умолчанию экспорт выключен, поэтому для обычного запуска Collector не нужен. Чтобы включить экспорт, укажите в `.env`:
+
+```dotenv
+OTEL_TRACES_EXPORTER=otlp
+OTEL_TRACES_SAMPLER=parentbased_traceidratio
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+OTEL_SERVICE_NAME=rt-analytics-api
+OTEL_TRACES_SAMPLER_ARG=1.0
+```
+
+Имя `otel-collector` замените на адрес Collector, доступный из контейнера API. В Collector трассы принимаются по адресу `/v1/traces`. Доля семплирования задаётся значением от `0.0` до `1.0`; `1.0` сохраняет все корневые трассы. Для дочерних трасс решение о семплировании наследуется из входящего `traceparent`. Prometheus-метрики остаются отдельным каналом.
+
+HTTP-трассы содержат метод, шаблон маршрута и код ответа. Query-параметры, заголовки, cookies, тела запросов и ответов, идентификаторы пользователей и тексты исключений не добавляются. Маршруты health-check, метрик и документации исключены. Трассировка охватывает HTTP-запросы API; Celery и SQL-запросы не инструментируются.
+
 ### Демо-пользователи
 
 Пароль у всех: `Demo2026!` (только для демо, задаётся в `backend/app/seed.py`).
