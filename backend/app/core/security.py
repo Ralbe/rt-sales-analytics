@@ -22,19 +22,27 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_token(user_id: int, scope: str, minutes: int) -> str:
-    payload = {"sub": str(user_id), "scope": scope, "exp": datetime.now(UTC) + timedelta(minutes=minutes)}
+def create_token(user_id: int, scope: str, minutes: int, ver: int = 0) -> str:
+    payload = {"sub": str(user_id), "scope": scope, "ver": ver, "exp": datetime.now(UTC) + timedelta(minutes=minutes)}
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
 
 def decode_token(token: str, scope: str) -> int | None:
+    context = decode_token_context(token, scope)
+    return context[0] if context is not None else None
+
+
+def decode_token_context(token: str, scope: str) -> tuple[int, int] | None:
+    """Проверяет JWT и возвращает пользователя с версией; старые токены имеют версию 0."""
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except jwt.PyJWTError:
+        user_id = int(payload["sub"])
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError, OverflowError):
         return None
-    if payload.get("scope") != scope:
+    version = payload.get("ver", 0)
+    if payload.get("scope") != scope or user_id <= 0 or type(version) is not int or version < 0:
         return None
-    return int(payload["sub"])
+    return user_id, version
 
 
 def new_totp_secret() -> str:

@@ -9,7 +9,7 @@ from app.core.security import (
     SCOPE_ACCESS,
     SCOPE_MFA,
     create_token,
-    decode_token,
+    decode_token_context,
     new_totp_secret,
     totp_uri,
     verify_password,
@@ -41,13 +41,14 @@ def login(data: LoginIn, request: Request, db: Session = Depends(get_db)) -> Log
     if user is None or not user.is_active or not verify_password(data.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, INVALID_CREDENTIALS)
 
+    auth_version = user.auth_version
     setup_required = not user.totp_enabled
     if setup_required and not user.totp_secret:
         user.totp_secret = new_totp_secret()
         db.commit()
 
     return LoginOut(
-        mfa_token=create_token(user.id, SCOPE_MFA, settings.mfa_token_minutes),
+        mfa_token=create_token(user.id, SCOPE_MFA, settings.mfa_token_minutes, ver=auth_version),
         setup_required=setup_required,
         otpauth_uri=totp_uri(user.totp_secret, user.email) if setup_required else None,
         secret=user.totp_secret if setup_required else None,
@@ -57,10 +58,12 @@ def login(data: LoginIn, request: Request, db: Session = Depends(get_db)) -> Log
 @router.post("/2fa", response_model=UserOut)
 def verify_second_factor(data: MfaIn, response: Response, db: Session = Depends(get_db)) -> User:
     """Шаг 2: проверка одноразового кода из приложения-аутентификатора."""
-    user_id = decode_token(data.mfa_token, SCOPE_MFA)
-    user = db.get(User, user_id) if user_id else None
-    if user is None or not user.is_active or not user.totp_secret:
+    context = decode_token_context(data.mfa_token, SCOPE_MFA)
+    user = db.get(User, context[0]) if context is not None else None
+    if user is None or not user.is_active or not user.totp_secret or user.auth_version != context[1]:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Сессия входа истекла, войдите заново")
+    # Не повышаем версию выдаваемой cookie, даже если отзыв случился во время проверки кода.
+    auth_version = context[1]
     _check_rate_limit(f"2fa:{user.id}")
 
     if not verify_totp(user.totp_secret, data.code):
@@ -72,7 +75,7 @@ def verify_second_factor(data: MfaIn, response: Response, db: Session = Depends(
 
     response.set_cookie(
         ACCESS_COOKIE,
-        create_token(user.id, SCOPE_ACCESS, settings.access_token_minutes),
+        create_token(user.id, SCOPE_ACCESS, settings.access_token_minutes, ver=auth_version),
         max_age=settings.access_token_minutes * 60,
         httponly=True,
         secure=settings.cookie_secure,

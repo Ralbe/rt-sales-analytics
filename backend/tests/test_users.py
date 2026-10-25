@@ -4,16 +4,27 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
 
+import jwt
 import pyotp
 import pytest
 from conftest import login
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.api import users
-from app.core.security import ACCESS_COOKIE, SCOPE_ACCESS, create_token, hash_password, verify_password
+from app.core.config import settings
+from app.core.security import (
+    ACCESS_COOKIE,
+    SCOPE_ACCESS,
+    SCOPE_MFA,
+    create_token,
+    decode_token_context,
+    hash_password,
+    verify_password,
+)
 from app.db import get_db
 from app.main import app
 from app.models import AuditLog, Role, User
@@ -104,10 +115,11 @@ def test_create_normalizes_and_audits_only_public_fields(admin, db):
     assert user.password_hash not in response.text
 
 
-def test_new_user_must_complete_existing_totp_setup(admin, client, db):
-    user_id = admin.post("/api/users", json=payload()).json()["id"]
+@pytest.mark.parametrize("email", ["new@example.test", "sales&support@example.test"])
+def test_new_user_must_complete_existing_totp_setup(admin, client, db, email):
+    user_id = admin.post("/api/users", json=payload(email=email)).json()["id"]
     client.post("/api/auth/logout")
-    response = client.post("/api/auth/login", json={"email": "NEW@EXAMPLE.TEST", "password": PASSWORD})
+    response = client.post("/api/auth/login", json={"email": email.upper(), "password": PASSWORD})
     assert response.status_code == 200
     challenge = response.json()
     assert challenge["setup_required"] is True
@@ -199,22 +211,69 @@ def test_cannot_change_password_or_mfa_on_update(admin, db):
         assert "скрытое значение" not in response.text
 
 
-def test_disable_revokes_existing_cookie_and_reactivation_preserves_mfa(admin, client, db):
+@pytest.mark.parametrize("legacy", [False, True])
+def test_disable_revokes_existing_cookie_and_reactivation_preserves_mfa(admin, client, db, legacy):
     admin_cookie = client.cookies.get(ACCESS_COOKIE)
     target = login(client, db, "manager1@example.com")
     target_cookie = client.cookies.get(ACCESS_COOKIE)
     mfa_secret = target.totp_secret
+    old_mfa = client.post(
+        "/api/auth/login", json={"email": target.email, "password": DEMO_PASSWORD},
+    ).json()["mfa_token"]
+    if legacy:
+        def without_version(token):
+            claims = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+            claims.pop("ver")
+            return jwt.encode(claims, settings.secret_key, algorithm="HS256")
+
+        target_cookie, old_mfa = without_version(target_cookie), without_version(old_mfa)
+        client.cookies.clear()
+        client.cookies.set(ACCESS_COOKIE, target_cookie)
+        assert client.get("/api/auth/me").status_code == 200
+        assert client.post("/api/auth/2fa", json={
+            "mfa_token": old_mfa, "code": pyotp.TOTP(mfa_secret).now(),
+        }).status_code == 200
+    client.cookies.clear()
     client.cookies.set(ACCESS_COOKIE, admin_cookie)
     assert admin.put(f"/api/users/{target.id}", json=update_payload(target, is_active=False)).status_code == 200
+    assert target.auth_version == 1
+    assert admin.put(f"/api/users/{target.id}", json=update_payload(target, is_active=False)).status_code == 200
+    assert target.auth_version == 1
     assert target.id not in {u["id"] for u in client.get("/api/refs").json()["managers"]}
+    client.cookies.clear()
     client.cookies.set(ACCESS_COOKIE, target_cookie)
     assert client.get("/api/auth/me").status_code == 401
     assert client.get("/api/projects").status_code == 401
     assert client.post("/api/auth/login", json={"email": target.email, "password": DEMO_PASSWORD}).status_code == 401
+    client.cookies.clear()
     client.cookies.set(ACCESS_COOKIE, admin_cookie)
     assert admin.put(f"/api/users/{target.id}", json=update_payload(target, is_active=True)).status_code == 200
     assert target.totp_enabled and target.totp_secret == mfa_secret
+    assert target.auth_version == 1
     assert target.id in {u["id"] for u in client.get("/api/refs").json()["managers"]}
+    client.cookies.clear()
+    client.cookies.set(ACCESS_COOKIE, target_cookie)
+    assert client.get("/api/auth/me").status_code == 401
+    assert client.get("/api/projects").status_code == 401
+    rejected_mfa = client.post("/api/auth/2fa", json={
+        "mfa_token": old_mfa, "code": pyotp.TOTP(mfa_secret).now(),
+    })
+    assert rejected_mfa.status_code == 401
+    assert not rejected_mfa.headers.get("set-cookie")
+    client.cookies.clear()
+    fresh_login = client.post("/api/auth/login", json={"email": target.email, "password": DEMO_PASSWORD})
+    assert fresh_login.status_code == 200
+    challenge = fresh_login.json()
+    assert challenge["setup_required"] is False
+    assert challenge["secret"] is None and challenge["otpauth_uri"] is None
+    assert decode_token_context(challenge["mfa_token"], SCOPE_MFA) == (target.id, 1)
+    accepted_mfa = client.post("/api/auth/2fa", json={
+        "mfa_token": challenge["mfa_token"], "code": pyotp.TOTP(mfa_secret).now(),
+    })
+    assert accepted_mfa.status_code == 200
+    assert client.get("/api/auth/me").json()["id"] == target.id
+    assert decode_token_context(client.cookies.get(ACCESS_COOKIE), SCOPE_ACCESS) == (target.id, 1)
+    assert target.totp_secret == mfa_secret
 
 
 def test_cannot_disable_self(admin, db):
@@ -243,8 +302,32 @@ def test_self_demotion_is_allowed_with_another_admin_and_revokes_admin_access(ad
     actor = db.scalar(select(User).where(User.email == "admin@example.com"))
     assert admin.put(f"/api/users/{actor.id}", json=update_payload(actor, role="analyst")).status_code == 200
     assert admin.get("/api/auth/me").json()["role"] == "analyst"
+    assert actor.auth_version == 0
     assert admin.get("/api/users").status_code == 403
     assert admin.post("/api/users", json=payload()).status_code == 403
+
+
+def test_queued_admin_write_cannot_survive_revocation_and_reactivation(tmp_path):
+    engine = create_engine(f"sqlite+pysqlite:///{(tmp_path / 'queued-admin.db').as_posix()}")
+    User.__table__.create(engine)
+    try:
+        with Session(engine) as db:
+            db.add(User(id=1, email="admin@example.test", full_name="Администратор", role=Role.admin,
+                        password_hash=hash_password(PASSWORD)))
+            db.commit()
+        with Session(engine) as queued_db, Session(engine) as revoking_db:
+            actor = queued_db.get(User, 1)
+            assert actor.auth_version == 0
+            # Инициатор уже загружен, но ещё не получил блокировку административной операции.
+            revoking_db.execute(update(User).where(User.id == 1).values(is_active=False, auth_version=1))
+            revoking_db.execute(update(User).where(User.id == 1).values(is_active=True))
+            revoking_db.commit()
+            with pytest.raises(HTTPException) as error:
+                users._lock_users(queued_db, actor)
+            assert error.value.status_code == 401
+            assert actor.is_active and actor.role == Role.admin and actor.auth_version == 1
+    finally:
+        engine.dispose()
 
 
 def test_missing_user_and_no_delete(admin):
