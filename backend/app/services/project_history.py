@@ -8,35 +8,22 @@ from sqlalchemy.orm import Session
 
 from app.history_schemas import ProjectHistoryChange, ProjectHistoryItem
 from app.models import STAGE_LABELS, Client, Project, ReferenceValue, Service, User
+from app.project_field_label_catalog import FIELD_LABELS
+from app.services.project_field_labels import (
+    effective_project_field_labels,
+    historical_field_label,
+    with_snapshot_field_labels,
+)
 
 PROJECT_FIELDS = {
-    "name": "Название проекта",
-    "description": "Описание",
-    "client_id": "Клиент",
-    "manager_id": "Ответственный",
-    "service_id": "Услуга",
-    "stage": "Стадия системы",
-    "amount": "Сумма контракта",
-    "cost": "Себестоимость",
-    "probability": "Вероятность",
-    "start_date": "Дата начала",
-    "expected_close_date": "Плановое закрытие",
-    "closed_at": "Дата закрытия",
-    "payment_type_id": "Тип платежа",
-    "customer_stage_id": "Этап по ТЗ",
-    "indicator_id": "Индикатор",
-    "accepted_for_forecast": "Принимаемый к прогнозу",
-    "assessment_status_id": "Принимаемый к оценке",
-    "subsidiary_implementation": "Реализация через ДЗО",
-    "management_control": "Контроль руководства",
-    "is_industry_solution": "Отраслевое решение",
-    "industry_manager": "Отраслевой менеджер",
-    "industry_project_number": "Номер отраслевого проекта",
-    "implementation_year": "Год реализации",
-    "project_status": "Статус проекта",
-    "realized_work": "Сделано за период",
-    "period_plan": "Планы на период",
-    "archived_at": "Архивирование",
+    key: FIELD_LABELS[key].legacy_label or FIELD_LABELS[key].default_label
+    for key in (
+        "name", "description", "client_id", "manager_id", "service_id", "stage", "amount", "cost", "probability",
+        "start_date", "expected_close_date", "closed_at", "payment_type_id", "customer_stage_id", "indicator_id",
+        "accepted_for_forecast", "assessment_status_id", "subsidiary_implementation", "management_control",
+        "is_industry_solution", "industry_manager", "industry_project_number", "implementation_year", "project_status",
+        "realized_work", "period_plan", "archived_at",
+    )
 }
 REFERENCE_MODELS = {
     "client_id": Client,
@@ -141,9 +128,9 @@ class HistoryFormatter:
 
     def financial_row(self, row: dict) -> str:
         kind_value = row.get("kind")
-        kind = {"revenue": "Выручка", "cost": "Затраты"}.get(
-            kind_value if isinstance(kind_value, str) else "",
-            "Финансовая строка",
+        kind = (
+            historical_field_label(f"financial_entries.{kind_value}", row)
+            if kind_value in ("revenue", "cost") else "Финансовая строка"
         )
         month, year = row.get("month"), row.get("year")
         period = (
@@ -155,8 +142,12 @@ class HistoryFormatter:
         vat_value = row.get("vat_included")
         vat = ("с НДС" if vat_value else "без НДС") if type(vat_value) is bool else "Признак НДС не записан"
         parts = [kind, period, amount, vat]
-        for field, label in (("status_id", "Статус"), ("article_id", "Статья"), ("cost_type_id", "Тип затрат")):
+        for field in ("status_id", "article_id", "cost_type_id"):
             if field in row and row[field] is not None:
+                key = f"financial_entries.{field}"
+                if field == "status_id" and kind_value in ("revenue", "cost"):
+                    key = f"financial_entries.{kind_value}_status"
+                label = historical_field_label(key, row)
                 parts.append(f"{label}: {self.reference(field, row)}")
         return " · ".join(parts)
 
@@ -172,7 +163,7 @@ class HistoryFormatter:
         if action not in {"create", "update", "archive", "restore"}:
             return []
         changes = []
-        for field, label in PROJECT_FIELDS.items():
+        for field in PROJECT_FIELDS:
             if field not in before and field not in after:
                 continue
             old, new = self.value(field, before), self.value(field, after)
@@ -183,6 +174,7 @@ class HistoryFormatter:
             )
             if field in before and field in after and unchanged:
                 continue
+            label = historical_field_label(field, after if field in after else before)
             changes.append(ProjectHistoryChange(field=field, label=label, before=old, after=new))
         return changes
 
@@ -237,7 +229,7 @@ class HistoryFormatter:
         return changes
 
 
-def project_snapshot(db: Session, project: Project) -> dict:
+def project_snapshot(db: Session, project: Project, *, field_labels: dict[str, str] | None = None) -> dict:
     snapshot = jsonable_encoder(
         {field: getattr(project, field) for field in PROJECT_FIELDS},
         custom_encoder={Decimal: str},
@@ -250,10 +242,12 @@ def project_snapshot(db: Session, project: Project) -> dict:
         for field in PROJECT_FIELDS
         if field in REFERENCE_MODELS and snapshot[field] is not None
     }
-    return snapshot
+    return with_snapshot_field_labels(
+        snapshot, effective_project_field_labels(db) if field_labels is None else field_labels,
+    )
 
 
-def financial_snapshot(row, references: dict | None = None) -> dict:
+def financial_snapshot(row, references: dict | None = None, *, field_labels: dict[str, str] | None = None) -> dict:
     snapshot = {field: getattr(row, field) for field in FINANCIAL_FIELDS}
     snapshot["amount"] = decimal_text(row.amount, 3)
     if references is None:
@@ -262,7 +256,9 @@ def financial_snapshot(row, references: dict | None = None) -> dict:
         reference = references.get(field)
         snapshot[field] = reference.id if reference is not None else None
     snapshot["_labels"] = {field: ref.name for field, ref in references.items() if ref is not None}
-    return snapshot
+    keys = [f"financial_entries.{field}" for field in FINANCIAL_FIELDS if snapshot[field] is not None]
+    keys.extend((f"financial_entries.{snapshot['kind']}", f"financial_entries.{snapshot['kind']}_status"))
+    return with_snapshot_field_labels(snapshot, field_labels or {}, keys=keys)
 
 
 def _snapshots(payload: dict) -> list[dict]:

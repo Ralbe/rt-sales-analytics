@@ -37,6 +37,12 @@ from app.schemas import (
     ProjectPage,
 )
 from app.services import audit
+from app.services.project_field_label_export import PROJECT_EXPORT_FIELDS, write_project_export_headers
+from app.services.project_field_labels import (
+    effective_project_field_labels,
+    same_project_values,
+    with_snapshot_field_labels,
+)
 from app.services.project_history import financial_snapshot, history_items, project_snapshot, same_finances
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -192,39 +198,7 @@ def export_projects(
     wb = Workbook()
     ws = wb.active
     ws.title = "Проекты"
-    headers = [
-        "ID",
-        "Проект",
-        "Клиент",
-        "ИНН",
-        "Сегмент",
-        "Услуга",
-        "Ответственный",
-        "Стадия",
-        "Сумма, ₽",
-        "Себестоимость, ₽",
-        "Маржа, ₽",
-        "Вероятность, %",
-        "Начало",
-        "План закрытия",
-        "Закрыт",
-        "Тип платежа",
-        "Этап по ТЗ",
-        "Индикатор",
-        "Принимаемый к прогнозу",
-        "Принимаемый к оценке",
-        "Реализация через ДЗО",
-        "Контроль руководства",
-        "Отраслевое решение",
-        "Отраслевой менеджер",
-        "Номер отраслевого проекта",
-        "Год реализации",
-        "Статус проекта",
-        "Сделано за период",
-        "Планы на период",
-        "Создан (UTC)",
-    ]
-    ws.append(headers)
+    write_project_export_headers(ws, effective_project_field_labels(db))
     for cell in ws[1]:
         cell.font = Font(bold=True)
     for p in projects:
@@ -266,7 +240,7 @@ def export_projects(
         for cell in ws[ws.max_row]:
             if cell.data_type == "f":
                 cell.data_type = "s"
-    widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(headers) - 15)
+    widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(PROJECT_EXPORT_FIELDS) - 15)
     for index, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
     buf = BytesIO()
@@ -301,13 +275,16 @@ def _set_archived(db: Session, project_id: int, user: User, *, archived: bool) -
     if (project.archived_at is not None) == archived:
         return to_out(project)
     before = project.archived_at.isoformat() if project.archived_at else None
+    field_labels = effective_project_field_labels(db)
     project.archived_at = datetime.now(UTC) if archived else None
     project.archived_by_id = user.id if archived else None
     project.updated_at = func.now()
     audit.record(
         db, user.id, "archive" if archived else "restore", "project", project.id,
-        before={"archived_at": before},
-        after={"archived_at": project.archived_at.isoformat() if project.archived_at else None},
+        before=with_snapshot_field_labels({"archived_at": before}, field_labels),
+        after=with_snapshot_field_labels(
+            {"archived_at": project.archived_at.isoformat() if project.archived_at else None}, field_labels,
+        ),
         author_name=user.full_name,
     )
     db.commit()
@@ -459,12 +436,11 @@ def update_project(
     _require_active(project)
     try:
         references = _validate_financial_entries(db, data.financial_entries or [])
-        before = project_snapshot(db, project)
+        field_labels = effective_project_field_labels(db)
+        before = project_snapshot(db, project, field_labels=field_labels)
         _apply(db, project, data, user)
-        after = project_snapshot(db, project)
-        changed = {key: value for key, value in before.items() if key != "_labels"} != {
-            key: value for key, value in after.items() if key != "_labels"
-        }
+        after = project_snapshot(db, project, field_labels=field_labels)
+        changed = not same_project_values(before, after)
         if changed:
             audit.record(
                 db, user.id, "update", "project", project.id,
@@ -524,8 +500,12 @@ def _replace_financial_entries(
     user: User,
 ) -> bool:
     # Проверка справочников завершена до изменения карточки и финансов; коммит выполняет маршрут.
-    before = [financial_snapshot(row) for row in project.financial_entries]
-    after = [financial_snapshot(entry, ref) for entry, ref in zip(entries, references, strict=True)]
+    field_labels = effective_project_field_labels(db)
+    before = [financial_snapshot(row, field_labels=field_labels) for row in project.financial_entries]
+    after = [
+        financial_snapshot(entry, ref, field_labels=field_labels)
+        for entry, ref in zip(entries, references, strict=True)
+    ]
     if same_finances(before, after):
         return False
     project.financial_entries.clear()

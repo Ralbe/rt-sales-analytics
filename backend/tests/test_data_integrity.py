@@ -70,7 +70,8 @@ def test_xlsx_serializes_timezone_and_keeps_text_literal(db, created_at):
     result = SimpleNamespace(unique=lambda: SimpleNamespace(all=lambda: [project]))
     response = export_projects(
         params=SimpleNamespace(query=lambda _: select(Project)),
-        db=SimpleNamespace(scalars=lambda _: result),
+        # Проект получает исходный aware datetime; подписи читаются из настоящей тестовой БД.
+        db=SimpleNamespace(scalars=lambda _: result, execute=db.execute),
         user=db.scalar(select(User).where(User.email == "analyst@example.com")),
     )
 

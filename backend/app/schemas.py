@@ -87,6 +87,7 @@ class RefsOut(BaseModel):
     revenue_statuses: list[RefItem]
     cost_statuses: list[RefItem]
     roles: list[CodeItem]
+    project_field_labels: dict[str, str] = Field(default_factory=dict)
 
 
 # --- Клиенты ------------------------------------------------------------
