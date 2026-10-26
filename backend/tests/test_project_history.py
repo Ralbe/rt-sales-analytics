@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import datetime
 
 import pytest
@@ -117,6 +118,35 @@ def test_create_history_has_readable_snapshot_and_safe_author(as_user, db):
     assert all(row["before"] is None for row in changes.values())
     assert "email" not in str(item) and me.email not in str(item)
     assert "password" not in str(item) and "totp" not in str(item)
+
+
+def test_customer_create_history_formats_inapplicable_stage_and_unknown_closure(as_user, db):
+    project_id = _create(as_user, db)
+    log = db.scalar(select(AuditLog).where(
+        AuditLog.entity == "project", AuditLog.entity_id == project_id, AuditLog.action == "create",
+    ))
+    original = deepcopy(log.payload)
+    assert original["after"]["_stage_scheme"] == "customer"
+    assert original["after"]["stage"] is None and original["after"]["closed_at"] is None
+    item = _history(as_user, project_id)["items"][0]
+    changes = {row["field"]: row for row in item["changes"]}
+    assert changes["stage"]["after"] == "Не применяется"
+    assert changes["closed_at"]["after"] == "Не определено"
+    assert changes["stage"]["before"] is None and changes["closed_at"]["before"] is None
+    assert not any("scheme" in field for field in changes)
+    db.expire_all()
+    project = db.get(Project, project_id)
+    assert project.stage is None and project.closed_at is None
+    assert db.get(AuditLog, log.id).payload == original
+
+
+@pytest.mark.parametrize("metadata", [{}, {"_stage_scheme": "legacy"}])
+def test_old_null_history_keeps_original_text_even_on_customer_project(as_user, db, metadata):
+    project_id = _create(as_user, db)
+    _log(db, project_id, "create", after={"stage": None, "closed_at": None, **metadata})
+    changes = {row["field"]: row for row in _history(as_user, project_id)["items"][0]["changes"]}
+    assert changes["stage"]["after"] == "Не задано"
+    assert changes["closed_at"]["after"] == "Не задано"
 
 
 def test_project_updates_and_closing_are_audited_without_noops(as_user, db):

@@ -98,6 +98,11 @@ class HistoryFormatter:
         if field not in snapshot:
             return None
         value = snapshot[field]
+        if value is None and snapshot.get("_stage_scheme") == "customer":
+            if field == "stage":
+                return "Не применяется"
+            if field == "closed_at":
+                return "Не определено"
         if value is None or value == "":
             return "Не задано"
         if field in REFERENCE_MODELS:
