@@ -299,18 +299,17 @@ test("карточка проекта: refetch с ошибкой сохраня�
       if (route.request().method() === "PUT") {
         const body = route.request().postDataJSON();
         savedName = body.name;
-        currentProject = { ...currentProject, ...body, updated_at: "2026-10-25T10:00:00Z" };
+        sentEntries = body.financial_entries;
+        expect(Array.isArray(sentEntries)).toBe(true);
+        currentProject = {
+          ...currentProject, ...body, updated_at: "2026-10-25T10:00:00Z",
+          financial_entries: sentEntries.map(({ kind, year, month, amount, vat_included }, index) => ({
+            kind, year, month, amount, vat_included, id: 30 + index, status: REFS.revenue_statuses[0],
+          })),
+        };
         return route.fulfill({ json: currentProject });
       }
       return failing ? unavailable(route) : route.fulfill({ json: currentProject });
-    },
-    "/projects/5/financial-entries": (route) => {
-      sentEntries = route.request().postDataJSON();
-      currentProject = {
-        ...currentProject,
-        financial_entries: sentEntries.map((entry, index) => ({ ...entry, id: 30 + index, status: REFS.revenue_statuses[0] })),
-      };
-      return route.fulfill({ json: currentProject.financial_entries });
     },
   });
   await page.goto("/projects/5");
