@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { EChartsOption } from "echarts";
 import { useRouter } from "next/navigation";
 
-import { Chart } from "@/components/Chart";
+import { Chart, PALETTE } from "@/components/Chart";
 import { api } from "@/lib/api";
 import { count, date, money, pct } from "@/lib/format";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldLabels } from "@/lib/project-field-labels";
@@ -123,7 +123,7 @@ export function TrendView({ widget, data, printable = false }: { widget: Widget;
         stack: "band",
         lineStyle: { opacity: 0 },
         symbol: "none",
-        areaStyle: { color: "#ff8a3d", opacity: 0.15 },
+        areaStyle: { color: PALETTE[1], opacity: 0.15 },
         tooltip: { show: false },
       },
     ],
@@ -179,6 +179,7 @@ export function BreakdownView({ widget, data, printable = false }: { widget: Wid
           radius: chart === "donut" ? ["45%", "75%"] : "75%",
           center: [printable ? "50%" : "35%", "50%"],
           label: { show: false },
+          itemStyle: { borderColor: "#FFFFFF", borderWidth: 2 },
           data: items.map((i) => ({ name: i.label, value: i.value })),
         },
       ],
