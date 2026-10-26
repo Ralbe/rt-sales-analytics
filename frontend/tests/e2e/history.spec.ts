@@ -36,7 +36,7 @@ function historyItem(id: number, changes: ProjectHistoryItem["changes"] = []): P
 }
 
 async function mockApi(page: Page, initial: ProjectHistoryItem[] = [], onHistory?: (route: Route) => Promise<void>) {
-  const state = { project: projectFixture(), history: [...initial], historyRequests: 0, financialStatus: 200 };
+  const state = { project: projectFixture(), history: [...initial], historyRequests: 0, saveStatus: 200, saves: 0, unexpected: [] as string[] };
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -53,31 +53,32 @@ async function mockApi(page: Page, initial: ProjectHistoryItem[] = [], onHistory
       } });
     }
     if (path === "/api/projects/42" && route.request().method() === "PUT") {
-      const body = route.request().postDataJSON() as { description: string };
+      const body = route.request().postDataJSON() as { description: string; financial_entries: FinancialEntry[] };
+      state.saves += 1;
+      expect(Array.isArray(body.financial_entries)).toBe(true);
+      if (state.saveStatus !== 200) {
+        return route.fulfill({ status: state.saveStatus, json: { detail: "Не удалось сохранить проект и финансовые строки" } });
+      }
       if (body.description !== state.project.description) {
         state.history.unshift(historyItem(100, [{
           field: "description", label: "Описание", before: state.project.description, after: body.description,
         }]));
-        state.project = { ...state.project, description: body.description, updated_at: "2026-10-25T12:00:00Z" };
       }
-      return route.fulfill({ json: state.project });
-    }
-    if (path === "/api/projects/42/financial-entries") {
-      if (state.financialStatus !== 200) {
-        return route.fulfill({ status: state.financialStatus, json: { detail: "Не удалось сохранить финансовые строки" } });
-      }
-      const entries = route.request().postDataJSON() as FinancialEntry[];
+      const entries = body.financial_entries;
       if (entries[0]?.amount !== state.project.financial_entries[0]?.amount) {
         state.history.unshift({ ...historyItem(101, [{
           field: "financial_entries", label: "Финансовая строка добавлена", before: "Строка отсутствовала",
           after: "Выручка · 10.2026 · 2,345 тыс. ₽ · с НДС · Статус: Начислено",
         }]), action: "replace_financial_entries", title: "Изменение финансовых строк" });
       }
-      const saved = entries.map((entry, index) => ({ ...entry, id: index + 100, status }));
-      state.project = { ...state.project, financial_entries: saved };
-      return route.fulfill({ json: saved });
+      const saved = entries.map(({ kind, year, month, amount, vat_included }, index) => ({
+        kind, year, month, amount, vat_included, id: index + 100, status,
+      }));
+      state.project = { ...state.project, description: body.description, financial_entries: saved, updated_at: "2026-10-25T12:00:00Z" };
+      return route.fulfill({ json: state.project });
     }
-    if (path === "/api/projects/42") return route.fulfill({ json: state.project });
+    if (path === "/api/projects/42" && route.request().method() === "GET") return route.fulfill({ json: state.project });
+    state.unexpected.push(`${route.request().method()} ${path}`);
     return route.fulfill({ status: 404, json: { detail: "Тестовый маршрут не найден" } });
   });
   return state;
@@ -140,10 +141,12 @@ test("сохранение карточки и финансов обновляе
   await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveValue("2.345");
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
   expect(state.historyRequests).toBeGreaterThan(1);
+  expect(state.saves).toBe(1);
+  expect(state.unexpected).toEqual([]);
 });
 
 test("сохранение только финансов обновляет историю и завершает редактирование", async ({ page }) => {
-  await mockApi(page);
+  const state = await mockApi(page);
   await page.goto("/projects/42");
   const history = page.getByRole("region", { name: "История изменений" });
   await expect(history).toContainText("История изменений пока пуста.");
@@ -152,17 +155,36 @@ test("сохранение только финансов обновляет ис
   await expect(history).toContainText("2,345 тыс. ₽");
   await expect(history.getByRole("listitem")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.saves).toBe(1);
+  expect(state.unexpected).toEqual([]);
 });
 
-test("история обновляется при сохранённой карточке и ошибке следующего запроса финансов", async ({ page }) => {
+test("атомарный отказ сохраняет карточку, финансы и историю без изменений; повтор обновляет их вместе", async ({ page }) => {
   const state = await mockApi(page);
-  state.financialStatus = 422;
+  state.saveStatus = 422;
   await page.goto("/projects/42");
   const history = page.getByRole("region", { name: "История изменений" });
   await expect(history).toContainText("История изменений пока пуста.");
-  await page.getByLabel("Суть проекта").fill("Карточка сохранена частично");
+  const historyRequests = state.historyRequests;
+  await page.getByLabel("Суть проекта").fill("Карточка и финансы сохранены вместе");
+  await page.getByLabel("Сумма, тыс. рублей").fill("2.345");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
-  await expect(page.getByText("Не удалось сохранить финансовые строки", { exact: false })).toBeVisible();
-  await expect(history).toContainText("Карточка сохранена частично");
-  expect(state.historyRequests).toBeGreaterThan(1);
+  await expect(page.locator(".form-footer .alert")).toContainText("Не удалось сохранить проект и финансовые строки");
+  await expect(page.getByLabel("Суть проекта")).toHaveValue("Карточка и финансы сохранены вместе");
+  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveValue("2.345");
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeEnabled();
+  await expect(history).toContainText("История изменений пока пуста.");
+  expect(state.project).toEqual(projectFixture());
+  expect(state.history).toEqual([]);
+  expect(state.historyRequests).toBe(historyRequests);
+  state.saveStatus = 200;
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(history).toContainText("Карточка и финансы сохранены вместе");
+  await expect(history).toContainText("2,345 тыс. ₽");
+  await expect(history.getByRole("listitem")).toHaveCount(2);
+  await expect(page.locator(".form-footer .alert")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.historyRequests).toBeGreaterThan(historyRequests);
+  expect(state.saves).toBe(2);
+  expect(state.unexpected).toEqual([]);
 });

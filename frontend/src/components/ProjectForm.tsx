@@ -167,7 +167,8 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const [draftRestored, setDraftRestored] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
-  const [pendingSave, setPendingSave] = useState(false);
+  const persistedIdRef = useRef(project?.id);
+  const savingRef = useRef(false);
   const persistedId = project?.id ?? pendingProjectId;
   const financialBaseline = useRef(financialRowsFromProject(project));
   const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(financialBaseline.current);
@@ -180,9 +181,9 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       defaultValues: fromProject(project, me?.id),
     });
   const { errors, isSubmitting, isDirty, dirtyFields, touchedFields } = formState;
-  const hasUnsavedChanges = isDirty || financialDirty || pendingSave;
+  const hasUnsavedChanges = isDirty || financialDirty;
 
-  // Частично записанную карточку нельзя считать чистой даже после возврата к исходным полям.
+  // Фоновое обновление не должно затирать несохранённый ввод.
   useEffect(() => {
     if (!project || hasUnsavedChanges || isSubmitting) return;
     financialBaseline.current = financialRowsFromProject(project);
@@ -280,58 +281,63 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       project_status: v.project_status || null,
       realized_work: v.realized_work,
       period_plan: v.period_plan,
-    };
-    let savedProjectId: number | undefined;
-    let cardSaved = false;
-    try {
-      const saved = persistedId
-        ? await put<Project>(`/projects/${persistedId}`, body)
-        : await post<Project>("/projects", body);
-      savedProjectId = saved.id;
-      cardSaved = true;
-      setPendingSave(true);
-      if (isNew) setPendingProjectId(saved.id);
-      await put(`/projects/${saved.id}/financial-entries`, financialEntries.map((entry) => ({
+      financial_entries: financialEntries.map((entry) => ({
         kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
-      })));
-      const complete = await api<Project>(`/projects/${saved.id}`);
-      await queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "project-history" });
-      if (isNew) {
-        submittedRef.current = true;
-        saveDraft(null);
-        router.replace(`/projects/${saved.id}`);
-      } else {
-        queryClient.setQueryData(["project", String(saved.id)], complete);
-        financialBaseline.current = financialRowsFromProject(complete);
-        setFinancialEntries(financialBaseline.current);
-        reset(fromProject(complete));
-        setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
-      }
-      setPendingSave(false);
+      })),
+    };
+    const projectId = project?.id ?? persistedIdRef.current;
+    let saved: Project;
+    try {
+      saved = projectId
+        ? await put<Project>(`/projects/${projectId}`, body)
+        : await post<Project>("/projects", body);
     } catch (e) {
-      const partial = cardSaved
-        ? "Карточка сохранена. Не удалось подтвердить сохранение финансовых строк. Повторите сохранение — новая карточка не создастся. "
+      const uncertainCreation = !projectId && (!(e instanceof ApiError) || e.status === 0 || e.status >= 500 || (e.status >= 200 && e.status < 300))
+        ? "Не удалось подтвердить создание проекта. Проверьте список проектов перед повтором: проект мог быть создан. "
         : "";
-      if (!(e instanceof ApiError)) return setFormError(partial + "Сервер недоступен, попробуйте ещё раз");
+      if (!(e instanceof ApiError)) return setFormError(uncertainCreation + "Сервер недоступен, попробуйте ещё раз");
       const fields = Object.entries(e.fields);
-      fields.forEach(([f, message]) =>
-        setError((SERVER_FIELD[f] ?? f) as keyof FormValues, { type: "server", message }),
-      );
-      if (partial || !fields.length || e.fields._form) setFormError(partial + e.message);
-    } finally {
-      // Карточка могла сохраниться, даже если следующий запрос финансов завершился ошибкой.
-      if (savedProjectId !== undefined) {
-        await queryClient.invalidateQueries({ queryKey: projectHistoryKey(savedProjectId) });
+      const financialErrors: string[] = [];
+      fields.forEach(([f, message]) => {
+        const field = SERVER_FIELD[f] ?? f;
+        if (field in v) setError(field as keyof FormValues, { type: "server", message });
+        else financialErrors.push(message);
+      });
+      if (uncertainCreation || !fields.length || financialErrors.length) {
+        setFormError(uncertainCreation + (financialErrors.length ? financialErrors.join(". ") : e.message));
       }
+      return;
     }
+
+    // Ответ атомарного сохранения подтверждает и карточку, и полный список финансов.
+    persistedIdRef.current = saved.id;
+    if (isNew) setPendingProjectId(saved.id);
+    const projectKey = ["project", String(saved.id)];
+    await queryClient.cancelQueries({ queryKey: projectKey, exact: true });
+    queryClient.setQueryData(projectKey, saved);
+    financialBaseline.current = financialRowsFromProject(saved);
+    setFinancialEntries(financialBaseline.current);
+    reset(fromProject(saved));
+    setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
+    if (isNew) {
+      submittedRef.current = true;
+      saveDraft(null);
+      router.replace(`/projects/${saved.id}`);
+    }
+    // Ошибка фонового чтения не меняет результат уже подтверждённой записи.
+    void queryClient.invalidateQueries({
+      predicate: (query) => query.queryKey[0] !== "project-history" &&
+        !(query.queryKey[0] === "project" && String(query.queryKey[1]) === String(saved.id)),
+    }).catch(() => undefined);
+    void queryClient.invalidateQueries({ queryKey: projectHistoryKey(saved.id) }).catch(() => undefined);
   });
 
   const clearDraft = () => {
     setPendingProjectId(null);
-    setPendingSave(false);
+    persistedIdRef.current = undefined;
     setFormError(null);
     saveDraft(null);
     reset(fromProject(undefined, me?.id));
@@ -348,7 +354,11 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const req = <span className="req">*</span>;
 
   return (
-    <form onSubmit={submit} noValidate className="card" style={{ display: "flex", flexDirection: "column" }}>
+    <form onSubmit={(event) => {
+      if (savingRef.current) return event.preventDefault();
+      savingRef.current = true;
+      void submit(event).finally(() => { savingRef.current = false; });
+    }} noValidate className="card" style={{ display: "flex", flexDirection: "column" }}>
       {draftRestored && (
         <div className="alert info" style={{ margin: "14px 20px 0", display: "flex", gap: 10, alignItems: "center" }}>
           Восстановлен несохранённый черновик.
