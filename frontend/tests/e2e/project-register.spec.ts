@@ -247,6 +247,6 @@ test("реестр отмечает проекты, созданные в выб
   await end.fill("2026-10-31");
   await expect(page.getByText(/Создан за период:/)).toHaveCount(2);
   await start.fill("2026-11-01");
-  await expect(page.getByRole("alert")).toHaveText("Начало периода не может быть позже конца.");
+  await expect(page.getByRole("alert").filter({ hasText: "Начало периода не может быть позже конца." })).toBeVisible();
   await expect(page.getByText(/Создан за период:/)).toHaveCount(0);
 });

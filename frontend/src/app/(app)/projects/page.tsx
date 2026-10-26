@@ -20,6 +20,25 @@ const COLUMN_FIELDS: Record<string, ProjectFieldKey> = {
 const YEARS = Array.from({ length: 301 }, (_, i) => 1900 + i);
 const amountFormat = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fullAmount = (value: string) => `${amountFormat.format(Number(value))} ₽`;
+const creationFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" });
+
+function creationInPeriod(value: string, from: string, to: string): Date | null {
+  if (!from || !to || from > to) return null;
+  const timestamp = new Date(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`);
+  if (Number.isNaN(timestamp.getTime())) return null;
+  const day = timestamp.toISOString().slice(0, 10);
+  return day >= from && day <= to ? timestamp : null;
+}
+
+function CreationMarker({ value, from, to }: { value: string; from: string; to: string }) {
+  const created = creationInPeriod(value, from, to);
+  return created ? (
+    <div><time className="badge" dateTime={created.toISOString()} style={{ whiteSpace: "normal" }}>
+      Создан за период: {creationFormat.format(created)} UTC
+    </time></div>
+  ) : null;
+}
+
 const COLUMNS: { key: string; label: string; sort?: string; num?: boolean; width?: number }[] = [
   { key: "name", label: "Проект", sort: "name", width: 280 },
   { key: "client", label: "Клиент", width: 260 },
@@ -59,6 +78,8 @@ export default function ProjectsPage() {
   const [page, setPage] = useState(1);
   const [archived, setArchived] = useState(false);
   const [openOnly, setOpenOnly] = useState(false);
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
   const q = useDebounced(search.trim());
 
   const params = {
@@ -156,6 +177,14 @@ export default function ProjectsPage() {
       </div>
 
       <div className="page-body">
+        <fieldset style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
+          <legend>Отметить проекты, созданные за период (UTC)</legend>
+          <div className="filters">
+            <label>С <input className="input" type="date" aria-label="Начало периода создания (UTC)" value={createdFrom} onChange={(event) => setCreatedFrom(event.target.value)} /></label>
+            <label>По <input className="input" type="date" aria-label="Конец периода создания (UTC)" value={createdTo} onChange={(event) => setCreatedTo(event.target.value)} /></label>
+          </div>
+          {createdFrom && createdTo && createdFrom > createdTo && <p className="error" role="alert">Начало периода не может быть позже конца.</p>}
+        </fieldset>
         <label className="check">
           <input type="checkbox" checked={openOnly} aria-describedby="open-projects-scope" onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
           Только открытые проекты прежних стадий
@@ -187,7 +216,7 @@ export default function ProjectsPage() {
             <tbody style={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
               {data?.items.map((p) => (
                 <tr key={p.id} className="clickable" onClick={() => router.push(`/projects/${p.id}`)}>
-                  <td>{p.name}</td>
+                  <td>{p.name}<CreationMarker value={p.created_at} from={createdFrom} to={createdTo} /></td>
                   <td>{p.client.name}</td>
                   <td>{p.client_inn || "—"}</td>
                   <td>{p.segment.name}</td>
