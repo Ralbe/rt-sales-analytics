@@ -30,14 +30,12 @@ def warm_analytics_cache() -> None:
     f = Filters()
     today = date.today()
     with SessionLocal() as db:
-        cache.set_json(cache.make_key("analytics", fn="kpi", filters=f, as_of=today), analytics.kpi(db, f, today))
+        cache.set_json(analytics.cache_key("kpi", f, as_of=today), analytics.kpi(db, f, today))
         for metric in ("funnel", "projects"):
-            key = cache.make_key("analytics", fn="trend", filters=f, as_of=today, weeks=6, horizon=14, metric=metric)
+            key = analytics.cache_key("trend", f, as_of=today, weeks=6, horizon=14, metric=metric)
             cache.set_json(key, analytics.trend(db, f, today, 6, 14, metric))
         for group_by in ("segment", "service", "stage", "manager"):
-            key = cache.make_key(
-                "analytics", fn="breakdown", filters=f, as_of=today, group_by=group_by, metric="funnel"
-            )
+            key = analytics.cache_key("breakdown", f, as_of=today, group_by=group_by, metric="funnel")
             cache.set_json(key, analytics.breakdown(db, f, today, group_by, "funnel"))
 
 

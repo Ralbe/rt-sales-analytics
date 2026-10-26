@@ -79,11 +79,14 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     close.setUTCDate(close.getUTCDate() + 30);
     const projectResponse = await member.request.post("/api/projects", { data: {
       name: `Приёмочный проект ${suffix}`, client_id: clients[0].id, service_id: refs.services[0].id,
-      stage: "lead", probability: 10, amount: "1000.00", cost: "100.00",
+      customer_stage_id: refs.customer_stages[0].id, amount: "1000.00", cost: "100.00",
       start_date: start.toISOString().slice(0, 10), expected_close_date: close.toISOString().slice(0, 10),
     } });
     expect(projectResponse.status()).toBe(201);
     const project = await projectResponse.json() as Project;
+    expect(project.stage_scheme).toBe("customer");
+    expect(project.stage).toBeNull();
+    expect(project.probability).toBe(refs.customer_stages[0].probability);
     expect(project.manager.id).toBe(created.id);
     await page.goto(`/projects/${project.id}`);
     await expect(page.getByRole("heading", { name: project.name, exact: true })).toBeVisible();
@@ -115,6 +118,20 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     expect((await xlsx.body()).subarray(0, 2).toString()).toBe("PK");
     expect((await member.request.get("/api/projects/export.xlsx")).status()).toBe(403);
 
+    const allProjectsResponse = await page.request.get(`/api/projects?manager_id=${created.id}`);
+    expect(allProjectsResponse.status()).toBe(200);
+    const allProjects = await allProjectsResponse.json();
+    expect(allProjects.stage_scope).toBe("all");
+    expect(allProjects.scope_note).toBeNull();
+    expect(allProjects.items).toContainEqual(expect.objectContaining({ id: project.id, stage_scheme: "customer", stage: null }));
+    const topResponse = await page.request.get(`/api/projects?manager_id=${created.id}&open_only=true`);
+    expect(topResponse.status()).toBe(200);
+    const top = await topResponse.json();
+    expect(top.stage_scope).toBe("legacy");
+    expect(top.scope_note).toBe("Показатели рассчитаны только по проектам с прежними шестью стадиями. Проекты с новыми этапами не включены.");
+    expect(top.items).toEqual([]);
+    expect(top.total).toBe(0);
+
     const reportResponse = await page.request.post("/api/dashboards", { data: {
       name: `Отчёт приёмки ${suffix}`, is_shared: false,
       filters: { segment_ids: [project.segment.id], service_ids: [project.service.id], manager_ids: [created.id] },
@@ -127,6 +144,9 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     const report = await reportResponse.json();
     await page.goto(`/dashboards/${report.id}`);
     await expect(page.getByRole("button", { name: "PDF / Печать" })).toBeEnabled();
+    const liveProjects = page.locator(".widget").filter({ hasText: "Проекты приёмки" });
+    await expect(liveProjects.locator("[data-stage-scope]")).toHaveText(top.scope_note);
+    await expect(liveProjects.locator("tbody tr")).toHaveCount(0);
     await page.evaluate(() => {
       (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted = false;
       window.print = () => { (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted = true; };
@@ -134,7 +154,9 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     await page.getByRole("button", { name: "PDF / Печать" }).click();
     await expect.poll(() => page.evaluate(() => (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted)).toBe(true);
     const surface = page.locator("[data-dashboard-print]");
-    await expect(surface).toContainText(project.name);
+    await expect(surface).not.toContainText(project.name);
+    await expect(surface.locator('[data-widget-id="projects"] [data-stage-scope]')).toHaveText(top.scope_note);
+    await expect(surface.locator('[data-widget-id="count"] [data-stage-scope]')).toHaveText(top.scope_note);
     await expect(surface).toContainText(newName);
     await expect(surface).toContainText(project.segment.name);
     await page.emulateMedia({ media: "print" });

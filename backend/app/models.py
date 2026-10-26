@@ -128,7 +128,14 @@ class Client(Base):
 
 class Project(Base):
     __tablename__ = "projects"
-    __table_args__ = (UniqueConstraint("client_id", "name", name="uq_project_client_name"),)
+    __table_args__ = (
+        UniqueConstraint("client_id", "name", name="uq_project_client_name"),
+        CheckConstraint(
+            "(stage_scheme = 'legacy' AND stage IS NOT NULL) OR "
+            "(stage_scheme = 'customer' AND stage IS NULL AND customer_stage_id IS NOT NULL)",
+            name="ck_project_stage_scheme",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(300))
@@ -136,7 +143,8 @@ class Project(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
     manager_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
-    stage: Mapped[Stage] = mapped_column(_enum(Stage, "project_stage"), index=True)
+    stage_scheme: Mapped[str] = mapped_column(String(10), default="customer", server_default="customer")
+    stage: Mapped[Stage | None] = mapped_column(_enum(Stage, "project_stage"), index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
     probability: Mapped[int] = mapped_column(Integer)
@@ -154,16 +162,20 @@ class Project(Base):
     industry_manager: Mapped[str | None] = mapped_column(String(200))
     industry_project_number: Mapped[str | None] = mapped_column(String(100))
     implementation_year: Mapped[int | None] = mapped_column(Integer)
-    project_status: Mapped[str | None] = mapped_column(String(100))
+    project_status: Mapped[str | None] = mapped_column(String(1000))
     realized_work: Mapped[str] = mapped_column(Text, default="", server_default="")
     period_plan: Mapped[str] = mapped_column(Text, default="", server_default="")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    archived_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", name="fk_projects_archived_by_id_users")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     client: Mapped[Client] = relationship(lazy="joined")
-    manager: Mapped[User] = relationship(lazy="joined")
+    manager: Mapped[User] = relationship(foreign_keys=[manager_id], lazy="joined")
     service: Mapped[Service] = relationship(lazy="joined")
     payment_type: Mapped[ReferenceValue | None] = relationship(foreign_keys=[payment_type_id], lazy="joined")
     customer_stage: Mapped[ReferenceValue | None] = relationship(foreign_keys=[customer_stage_id], lazy="joined")
@@ -233,3 +245,11 @@ class AuditLog(Base):
     entity_id: Mapped[int | None] = mapped_column(Integer)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class ProjectFieldLabel(Base):
+    __tablename__ = "project_field_labels"
+    __table_args__ = (CheckConstraint("length(label) BETWEEN 1 AND 120", name="ck_project_field_label_length"),)
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)

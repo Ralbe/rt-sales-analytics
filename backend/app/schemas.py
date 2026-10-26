@@ -7,6 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.security import inn_is_valid
 from app.models import Role, Stage
 
+LEGACY_STAGE_SCOPE_NOTE = (
+    "Показатели рассчитаны только по проектам с прежними шестью стадиями. "
+    "Проекты с новыми этапами не включены."
+)
+
 
 class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -87,6 +92,7 @@ class RefsOut(BaseModel):
     revenue_statuses: list[RefItem]
     cost_statuses: list[RefItem]
     roles: list[CodeItem]
+    project_field_labels: dict[str, str] = Field(default_factory=dict)
 
 
 # --- Клиенты ------------------------------------------------------------
@@ -130,10 +136,10 @@ class ProjectIn(BaseModel):
     client_id: int
     manager_id: int | None = None
     service_id: int
-    stage: Stage
-    amount: Decimal = Field(ge=0, le=Decimal("1e12"), decimal_places=2)
-    cost: Decimal = Field(default=Decimal("0"), ge=0, le=Decimal("1e12"), decimal_places=2)
-    probability: int = Field(ge=0, le=100)
+    stage: Stage | None = None
+    amount: Decimal = Field(ge=0, le=Decimal("999999999999.99"), decimal_places=2)
+    cost: Decimal = Field(default=Decimal("0"), ge=0, le=Decimal("999999999999.99"), decimal_places=2)
+    probability: int | None = Field(default=None, ge=0, le=100)
     start_date: date
     expected_close_date: date
     payment_type_id: int | None = None
@@ -147,9 +153,9 @@ class ProjectIn(BaseModel):
     industry_manager: str | None = Field(default=None, max_length=200)
     industry_project_number: str | None = Field(default=None, max_length=100)
     implementation_year: int | None = Field(default=None, ge=1900, le=2200)
-    project_status: str | None = Field(default=None, max_length=100)
-    realized_work: str = Field(default="", max_length=5000)
-    period_plan: str = Field(default="", max_length=5000)
+    project_status: str | None = Field(default=None, max_length=1000)
+    realized_work: str = Field(default="", max_length=1000)
+    period_plan: str = Field(default="", max_length=1000)
 
     @field_validator("name")
     @classmethod
@@ -172,13 +178,16 @@ class ProjectIn(BaseModel):
 
 class ProjectOut(ORM):
     id: int
+    archived_at: datetime | None = None
     name: str
     description: str
     client: RefItem
+    client_inn: str
     segment: RefItem
     manager: ManagerItem
     service: ServiceItem
-    stage: Stage
+    stage_scheme: Literal["legacy", "customer"] = Field(json_schema_extra={"readOnly": True})
+    stage: Stage | None
     amount: Decimal
     cost: Decimal
     margin: Decimal
@@ -210,7 +219,7 @@ class ProjectFinancialEntryIn(BaseModel):
     kind: Literal["revenue", "cost"]
     year: int = Field(ge=1900, le=2200)
     month: int = Field(ge=1, le=12)
-    amount: Decimal = Field(ge=0, le=Decimal("1e12"), decimal_places=3)
+    amount: Decimal = Field(ge=0, le=Decimal("999999999999.999"), decimal_places=3)
     vat_included: bool
     status_id: int
     article_id: int | None = None
@@ -236,6 +245,8 @@ class ProjectPage(BaseModel):
     total: int
     page: int
     size: int
+    stage_scope: Literal["legacy", "all"] = "all"
+    scope_note: str | None = None
 
 
 class NameCheckOut(BaseModel):
@@ -258,7 +269,12 @@ class KpiItem(BaseModel):
     delta_pct: float | None
 
 
-class KpiOut(BaseModel):
+class AnalyticsScope(BaseModel):
+    stage_scope: Literal["legacy"] = "legacy"
+    scope_note: str = LEGACY_STAGE_SCOPE_NOTE
+
+
+class KpiOut(AnalyticsScope):
     as_of: date
     previous_as_of: date
     items: list[KpiItem]
@@ -274,7 +290,7 @@ class ForecastPoint(TrendPoint):
     upper: float
 
 
-class TrendOut(BaseModel):
+class TrendOut(AnalyticsScope):
     metric: TrendMetric
     history: list[TrendPoint]
     forecast: list[ForecastPoint]
@@ -287,7 +303,7 @@ class BreakdownItem(BaseModel):
     value: float
 
 
-class BreakdownOut(BaseModel):
+class BreakdownOut(AnalyticsScope):
     metric: KpiKey
     group_by: GroupBy
     items: list[BreakdownItem]

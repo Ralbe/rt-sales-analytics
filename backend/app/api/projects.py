@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core import cache
@@ -27,7 +28,9 @@ from app.models import (
     Stage,
     User,
 )
+from app.project_write_schemas import ProjectSaveIn
 from app.schemas import (
+    LEGACY_STAGE_SCOPE_NOTE,
     NameCheckOut,
     ProjectFinancialEntryIn,
     ProjectFinancialEntryOut,
@@ -36,18 +39,30 @@ from app.schemas import (
     ProjectPage,
 )
 from app.services import audit
+from app.services.project_field_label_export import PROJECT_EXPORT_FIELDS, write_project_export_headers
+from app.services.project_field_labels import (
+    effective_project_field_labels,
+    same_project_values,
+    with_snapshot_field_labels,
+)
 from app.services.project_history import financial_snapshot, history_items, project_snapshot, same_finances
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 SORT_FIELDS = {
     "name": Project.name,
+    "client_inn": Client.inn,
+    "implementation_year": Project.implementation_year,
+    "customer_stage_id": Project.customer_stage_id,
     "amount": Project.amount,
     "start_date": Project.start_date,
     "expected_close_date": Project.expected_close_date,
     "updated_at": Project.updated_at,
 }
-SORT_PATTERN = r"^-?(name|amount|start_date|expected_close_date|updated_at)$"
+SORT_PATTERN = (
+    r"^-?(name|client_inn|implementation_year|customer_stage_id|"
+    r"amount|start_date|expected_close_date|updated_at)$"
+)
 EXPORT_LIMIT = 10_000
 
 
@@ -65,10 +80,12 @@ def to_out(p: Project) -> dict:
         "name": p.name,
         "description": p.description,
         "client": p.client,
+        "client_inn": p.client.inn,
         "segment": p.client.segment,
         "manager": p.manager,
         "service": p.service,
         "stage": p.stage,
+        "stage_scheme": p.stage_scheme,
         "amount": p.amount,
         "cost": p.cost,
         "margin": margin,
@@ -93,6 +110,7 @@ def to_out(p: Project) -> dict:
         "period_plan": p.period_plan,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
+        "archived_at": p.archived_at,
         "financial_entries": p.financial_entries,
     }
 
@@ -105,8 +123,14 @@ def _filtered_query(
     manager_id: list[int],
     stage: list[Stage],
     open_only: bool,
+    archived: bool = False,
+    customer_stage_id: int | None = None,
+    implementation_year: int | None = None,
 ) -> Select:
     stmt = select(Project).options(selectinload(Project.financial_entries)).join(Client, Client.id == Project.client_id)
+    if archived and user.role != Role.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Архив доступен только администратору")
+    stmt = stmt.where(Project.archived_at.is_not(None) if archived else Project.archived_at.is_(None))
     scope = manager_scope(user)
     if scope is not None:
         stmt = stmt.where(Project.manager_id == scope)
@@ -121,8 +145,12 @@ def _filtered_query(
         stmt = stmt.where(Project.manager_id.in_(manager_id))
     if stage:
         stmt = stmt.where(Project.stage.in_(stage))
+    if customer_stage_id is not None:
+        stmt = stmt.where(Project.customer_stage_id == customer_stage_id)
+    if implementation_year is not None:
+        stmt = stmt.where(Project.implementation_year == implementation_year)
     if open_only:
-        stmt = stmt.where(Project.stage.notin_(CLOSED_STAGES))
+        stmt = stmt.where(Project.stage_scheme == "legacy", Project.stage.notin_(CLOSED_STAGES))
     return stmt
 
 
@@ -135,17 +163,28 @@ class ListParams:
         manager_id: list[int] = Query(default=[]),
         stage: list[Stage] = Query(default=[]),
         open_only: bool = False,
+        archived: bool = False,
         sort: str = Query(default="-updated_at", pattern=SORT_PATTERN),
+        customer_stage_id: int | None = Query(default=None, ge=1),
+        implementation_year: int | None = Query(default=None, ge=1900, le=2200),
     ):
         self.q, self.segment_id, self.service_id = q, segment_id, service_id
         self.manager_id, self.stage, self.open_only, self.sort = manager_id, stage, open_only, sort
+        self.archived = archived
+        self.customer_stage_id, self.implementation_year = customer_stage_id, implementation_year
 
     def query(self, user: User) -> Select:
         stmt = _filtered_query(
-            user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only
+            user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only,
+            archived=self.archived, customer_stage_id=self.customer_stage_id,
+            implementation_year=self.implementation_year,
         )
-        column = SORT_FIELDS[self.sort.lstrip("-")]
-        return stmt.order_by(column.desc() if self.sort.startswith("-") else column.asc(), Project.id.desc())
+        field = self.sort.lstrip("-")
+        column = SORT_FIELDS[field]
+        order = column.desc() if self.sort.startswith("-") else column.asc()
+        if field in {"customer_stage_id", "implementation_year"}:
+            order = order.nulls_last()
+        return stmt.order_by(order, Project.id.desc())
 
 
 @router.get("", response_model=ProjectPage)
@@ -159,7 +198,11 @@ def list_projects(
     stmt = params.query(user)
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
     items = db.scalars(stmt.offset((page - 1) * size).limit(size)).unique().all()
-    return {"items": [to_out(p) for p in items], "total": total, "page": page, "size": size}
+    return {
+        "items": [to_out(p) for p in items], "total": total, "page": page, "size": size,
+        "stage_scope": "legacy" if params.open_only else "all",
+        "scope_note": LEGACY_STAGE_SCOPE_NOTE if params.open_only else None,
+    }
 
 
 @router.get("/check-name", response_model=NameCheckOut)
@@ -183,40 +226,11 @@ def export_projects(
     projects = db.scalars(params.query(user).limit(EXPORT_LIMIT)).unique().all()
     wb = Workbook()
     ws = wb.active
-    ws.title = "Проекты"
-    headers = [
-        "ID",
-        "Проект",
-        "Клиент",
-        "ИНН",
-        "Сегмент",
-        "Услуга",
-        "Ответственный",
-        "Стадия",
-        "Сумма, ₽",
-        "Себестоимость, ₽",
-        "Маржа, ₽",
-        "Вероятность, %",
-        "Начало",
-        "План закрытия",
-        "Закрыт",
-        "Тип платежа",
-        "Этап по ТЗ",
-        "Индикатор",
-        "Принимаемый к прогнозу",
-        "Принимаемый к оценке",
-        "Реализация через ДЗО",
-        "Контроль руководства",
-        "Отраслевое решение",
-        "Отраслевой менеджер",
-        "Номер отраслевого проекта",
-        "Год реализации",
-        "Статус проекта",
-        "Сделано за период",
-        "Планы на период",
-        "Создан (UTC)",
-    ]
-    ws.append(headers)
+    ws.title = "Проекты (6 стадий)" if params.open_only else "Проекты"
+    if params.open_only:
+        wb.create_sheet("Область данных").append([LEGACY_STAGE_SCOPE_NOTE])
+        wb.properties.description = LEGACY_STAGE_SCOPE_NOTE
+    write_project_export_headers(ws, effective_project_field_labels(db))
     for cell in ws[1]:
         cell.font = Font(bold=True)
     for p in projects:
@@ -229,7 +243,7 @@ def export_projects(
                 p.client.segment.name,
                 p.service.name,
                 p.manager.full_name,
-                STAGE_LABELS[p.stage],
+                STAGE_LABELS[p.stage] if p.stage is not None else "Не применяется",
                 float(p.amount),
                 float(p.cost),
                 float(p.amount - p.cost),
@@ -258,7 +272,7 @@ def export_projects(
         for cell in ws[ws.max_row]:
             if cell.data_type == "f":
                 cell.data_type = "s"
-    widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(headers) - 15)
+    widths = [7, 40, 35, 14, 22, 26, 24, 16, 16, 16, 16, 12, 12, 14, 12] + [22] * (len(PROJECT_EXPORT_FIELDS) - 15)
     for index, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
     buf = BytesIO()
@@ -271,12 +285,63 @@ def export_projects(
     )
 
 
-def _get_visible(db: Session, project_id: int, user: User) -> Project:
-    project = db.get(Project, project_id)
+def _get_visible(db: Session, project_id: int, user: User, *, for_update: bool = False) -> Project:
+    query = select(Project).where(Project.id == project_id)
+    if for_update:
+        query = query.with_for_update(of=Project).execution_options(populate_existing=True)
+    project = db.scalar(query)
     scope = manager_scope(user)
-    if project is None or (scope is not None and project.manager_id != scope):
+    if (project is None or (scope is not None and project.manager_id != scope)
+            or (project.archived_at is not None and user.role != Role.admin)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Проект не найден")
     return project
+
+
+def _require_active(project: Project) -> None:
+    if project.archived_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Сначала восстановите проект из архива")
+
+
+def _set_archived(db: Session, project_id: int, user: User, *, archived: bool) -> dict:
+    project = _get_visible(db, project_id, user, for_update=True)
+    if (project.archived_at is not None) == archived:
+        return to_out(project)
+    before = project.archived_at.isoformat() if project.archived_at else None
+    field_labels = effective_project_field_labels(db)
+    project.archived_at = datetime.now(UTC) if archived else None
+    project.archived_by_id = user.id if archived else None
+    project.updated_at = func.now()
+    audit.record(
+        db, user.id, "archive" if archived else "restore", "project", project.id,
+        before=with_snapshot_field_labels({"archived_at": before, "_stage_scheme": project.stage_scheme}, field_labels),
+        after=with_snapshot_field_labels(
+            {"archived_at": project.archived_at.isoformat() if project.archived_at else None,
+             "_stage_scheme": project.stage_scheme}, field_labels,
+        ),
+        author_name=user.full_name,
+    )
+    db.commit()
+    cache.bump("analytics")
+    db.refresh(project)
+    return to_out(project)
+
+
+@router.post("/{project_id}/archive", response_model=ProjectOut)
+def archive_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.admin)),
+) -> dict:
+    return _set_archived(db, project_id, user, archived=True)
+
+
+@router.post("/{project_id}/restore", response_model=ProjectOut)
+def restore_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.admin)),
+) -> dict:
+    return _set_archived(db, project_id, user, archived=False)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -314,7 +379,33 @@ def _find_duplicate(db: Session, name: str, client_id: int, exclude_id: int | No
     return next((p for p in db.scalars(stmt).unique() if p.name.casefold() == key), None)
 
 
+def _check_integrity_conflict(db: Session, data: ProjectIn, project_id: int | None = None) -> None:
+    db.rollback()
+    if _find_duplicate(db, data.name, data.client_id, project_id) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, {"field": "name", "message": "У этого клиента уже есть проект с таким названием"}
+        ) from None
+
+
 def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
+    customer = project.stage_scheme == "customer"
+    stage_changed = customer and (project.id is None or data.customer_stage_id != project.customer_stage_id)
+    if customer:
+        if data.stage is not None:
+            raise HTTPException(422, {
+                "field": "stage", "message": "Для новых проектов выберите этап по ТЗ; прежняя стадия не применяется",
+            })
+        if data.customer_stage_id is None:
+            raise HTTPException(422, {"field": "customer_stage_id", "message": "Выберите этап по ТЗ"})
+    else:
+        if "customer_stage_id" in data.model_fields_set and data.customer_stage_id != project.customer_stage_id:
+            raise HTTPException(422, {
+                "field": "customer_stage_id", "message": "Вспомогательный этап прежнего проекта изменять нельзя",
+            })
+        if "stage" in data.model_fields_set and data.stage is None:
+            raise HTTPException(422, {"field": "stage", "message": "Укажите прежнюю стадию проекта"})
+        if "probability" in data.model_fields_set and data.probability is None:
+            raise HTTPException(422, {"field": "probability", "message": "Укажите вероятность проекта"})
     if db.get(Client, data.client_id) is None:
         raise HTTPException(422, {"field": "client_id", "message": "Клиент не найден"})
     if db.get(Service, data.service_id) is None:
@@ -328,11 +419,14 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
     }
     references: dict[str, ReferenceValue] = {}
     for field, category in expected_categories.items():
+        if field == "customer_stage_id" and not customer:
+            continue
         reference_id = getattr(data, field)
         if reference_id is None:
             continue
         reference = db.get(ReferenceValue, reference_id)
-        if reference is None or not reference.is_active or reference.category != category:
+        retained_stage = field == "customer_stage_id" and not stage_changed
+        if reference is None or (not reference.is_active and not retained_stage) or reference.category != category:
             raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
         references[field] = reference
 
@@ -349,16 +443,28 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
             status.HTTP_409_CONFLICT, {"field": "name", "message": "У этого клиента уже есть проект с таким названием"}
         )
 
-    was_closed = project.stage in CLOSED_STAGES if project.stage else False
-    for field, value in data.model_dump(exclude={"manager_id"}).items():
-        setattr(project, field, value)
     customer_stage = references.get("customer_stage_id")
-    if customer_stage is not None:
-        if customer_stage.probability is None:
-            raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
-        project.probability = customer_stage.probability
+    if stage_changed and customer_stage is not None and customer_stage.probability is None:
+        raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
+
+    was_closed = project.stage in CLOSED_STAGES if project.stage else False
+    for field, value in data.model_dump(
+        exclude={"manager_id", "financial_entries", "stage", "customer_stage_id", "probability"},
+    ).items():
+        setattr(project, field, value)
     project.manager_id = manager_id
-    if data.stage in CLOSED_STAGES:
+    if customer:
+        project.stage = None
+        project.customer_stage_id = data.customer_stage_id
+        if stage_changed:
+            project.probability = customer_stage.probability
+        project.closed_at = None
+        return
+    if data.stage is not None:
+        project.stage = data.stage
+    if data.probability is not None:
+        project.probability = data.probability
+    if project.stage in CLOSED_STAGES:
         if not was_closed or project.closed_at is None:
             project.closed_at = max(date.today(), data.start_date)
     else:
@@ -367,19 +473,29 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
 
 @router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
 def create_project(
-    data: ProjectIn,
+    data: ProjectSaveIn,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
-    project = Project(cost=Decimal("0"))
-    _apply(db, project, data, user)
-    db.add(project)
-    db.flush()
-    audit.record(
-        db, user.id, "create", "project", project.id,
-        name=project.name, after=project_snapshot(db, project), author_name=user.full_name,
-    )
-    db.commit()
+    project = Project(cost=Decimal("0"), stage_scheme="customer")
+    try:
+        references = _validate_financial_entries(db, data.financial_entries or [])
+        _apply(db, project, data, user)
+        db.add(project)
+        db.flush()
+        audit.record(
+            db, user.id, "create", "project", project.id,
+            name=project.name, after=project_snapshot(db, project), author_name=user.full_name,
+        )
+        if data.financial_entries is not None:
+            _replace_financial_entries(db, project, data.financial_entries, references, user)
+        db.commit()
+    except IntegrityError:
+        _check_integrity_conflict(db, data)
+        raise
+    except Exception:
+        db.rollback()
+        raise
     cache.bump("analytics")
     db.refresh(project)
     return to_out(project)
@@ -388,35 +504,44 @@ def create_project(
 @router.put("/{project_id}", response_model=ProjectOut)
 def update_project(
     project_id: int,
-    data: ProjectIn,
+    data: ProjectSaveIn,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
-    project = _get_visible(db, project_id, user)
-    before = project_snapshot(db, project)
-    _apply(db, project, data, user)
-    after = project_snapshot(db, project)
-    if {key: value for key, value in before.items() if key != "_labels"} != {
-        key: value for key, value in after.items() if key != "_labels"
-    }:
-        audit.record(
-            db, user.id, "update", "project", project.id,
-            before=before, after=after, author_name=user.full_name,
-        )
-    db.commit()
-    cache.bump("analytics")
+    project = _get_visible(db, project_id, user, for_update=True)
+    _require_active(project)
+    try:
+        references = _validate_financial_entries(db, data.financial_entries or [])
+        field_labels = effective_project_field_labels(db)
+        before = project_snapshot(db, project, field_labels=field_labels)
+        _apply(db, project, data, user)
+        after = project_snapshot(db, project, field_labels=field_labels)
+        changed = not same_project_values(before, after)
+        if changed:
+            audit.record(
+                db, user.id, "update", "project", project.id,
+                before=before, after=after, author_name=user.full_name,
+            )
+        if data.financial_entries is not None:
+            finances_changed = _replace_financial_entries(db, project, data.financial_entries, references, user)
+            changed = changed or finances_changed
+        db.commit()
+    except IntegrityError:
+        _check_integrity_conflict(db, data, project_id)
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    if changed:
+        cache.bump("analytics")
     db.refresh(project)
     return to_out(project)
 
 
-@router.put("/{project_id}/financial-entries", response_model=list[ProjectFinancialEntryOut])
-def replace_financial_entries(
-    project_id: int,
+def _validate_financial_entries(
+    db: Session,
     entries: list[ProjectFinancialEntryIn],
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles(*PROJECT_EDITORS)),
-) -> list[ProjectFinancialEntry]:
-    project = _get_visible(db, project_id, user)
+) -> list[dict[str, ReferenceValue]]:
     if len(entries) > 500:
         raise HTTPException(422, "Не более 500 финансовых строк на проект")
     category_fields = {
@@ -425,6 +550,10 @@ def replace_financial_entries(
     }
     references = []
     for entry in entries:
+        if entry.kind == "revenue":
+            for field in ("article_id", "cost_type_id"):
+                if getattr(entry, field) is not None:
+                    raise HTTPException(422, {"field": field, "message": "Поле допустимо только для затрат"})
         row_refs = {}
         for field, category in category_fields[entry.kind].items():
             ref_id = getattr(entry, field)
@@ -439,10 +568,25 @@ def replace_financial_entries(
                 raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
             row_refs[field] = ref
         references.append(row_refs)
-    before = [financial_snapshot(row) for row in project.financial_entries]
-    after = [financial_snapshot(entry, ref) for entry, ref in zip(entries, references, strict=True)]
+    return references
+
+
+def _replace_financial_entries(
+    db: Session,
+    project: Project,
+    entries: list[ProjectFinancialEntryIn],
+    references: list[dict[str, ReferenceValue]],
+    user: User,
+) -> bool:
+    # Проверка справочников завершена до изменения карточки и финансов; коммит выполняет маршрут.
+    field_labels = effective_project_field_labels(db)
+    before = [financial_snapshot(row, field_labels=field_labels) for row in project.financial_entries]
+    after = [
+        financial_snapshot(entry, ref, field_labels=field_labels)
+        for entry, ref in zip(entries, references, strict=True)
+    ]
     if same_finances(before, after):
-        return project.financial_entries
+        return False
     project.financial_entries.clear()
     db.flush()
     project.financial_entries.extend(
@@ -469,6 +613,27 @@ def replace_financial_entries(
         after=after,
         author_name=user.full_name,
     )
-    db.commit()
+    return True
+
+
+@router.put("/{project_id}/financial-entries", response_model=list[ProjectFinancialEntryOut])
+def replace_financial_entries(
+    project_id: int,
+    entries: list[ProjectFinancialEntryIn],
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*PROJECT_EDITORS)),
+) -> list[ProjectFinancialEntry]:
+    project = _get_visible(db, project_id, user, for_update=True)
+    _require_active(project)
+    try:
+        references = _validate_financial_entries(db, entries)
+        changed = _replace_financial_entries(db, project, entries, references, user)
+        if not changed:
+            return project.financial_entries
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    cache.bump("analytics")
     db.refresh(project)
     return project.financial_entries

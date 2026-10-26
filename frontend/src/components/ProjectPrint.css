@@ -1,0 +1,33 @@
+.project-print-action { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.project-print-action > span { max-width: 660px; font-size: 12px; }
+.project-print-surface { display: none; }
+
+@page project-card { size: A4 portrait; margin: 12mm; }
+
+@media print {
+  html:has(.project-print-surface), body:has(.project-print-surface) { height: auto !important; overflow: visible !important; background: white; }
+  body:has(.project-print-surface) > :not(.project-print-surface) { display: none !important; }
+  .project-print-surface {
+    display: block; page: project-card; width: 100%; margin: 0; color: #111; background: white;
+    font: 10pt/1.45 Arial, "Segoe UI", sans-serif; overflow: visible; overflow-wrap: anywhere;
+    print-color-adjust: exact; -webkit-print-color-adjust: exact;
+  }
+  .project-print-surface h1 { font-size: 18pt; white-space: pre-wrap; }
+  .project-print-surface h2 { font-size: 12pt; margin: 5mm 0 2mm; break-after: avoid; }
+  .project-print-surface p { margin: 2mm 0; }
+  .project-print-surface dl { margin: 0; }
+  .project-print-surface dl > div { margin: 0 0 2mm; }
+  .project-print-surface dt { font-weight: 600; break-after: avoid; }
+  .project-print-surface dd { margin: 0; white-space: pre-wrap; orphans: 2; widows: 2; }
+  .project-print-surface table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9pt; }
+  .project-print-surface caption { text-align: left; break-after: avoid; }
+  .project-print-surface thead { display: table-header-group; }
+  .project-print-surface th, .project-print-surface td {
+    position: static; padding: 2mm; border: 1px solid #999; vertical-align: top;
+    text-align: left; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .project-print-surface td p { font-size: 8pt; }
+  .project-print-surface tr { break-inside: auto; }
+  .project-print-surface[data-ready="false"] > * { display: none !important; }
+  .project-print-surface[data-ready="false"]::before { content: "Печатная карточка не подготовлена. Дождитесь загрузки данных и нажмите «PDF / Печать карточки». Печатаются только сохранённые данные."; }
+}

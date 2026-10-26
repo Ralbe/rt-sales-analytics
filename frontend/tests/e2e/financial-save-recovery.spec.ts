@@ -39,11 +39,15 @@ const PROJECT: Project = {
   ],
 };
 
-type ProjectWrite = Pick<Project, "name" | "description" | "amount" | "cost" | "stage" | "probability" |
+type ProjectWrite = Pick<Project, "name" | "description" | "amount" | "cost" |
   "start_date" | "expected_close_date" | "period_plan"> & {
   client_id: number;
   service_id: number;
   manager_id: number;
+  financial_entries: FinancialWrite[];
+  stage?: Project["stage"];
+  probability?: number;
+  customer_stage_id?: number;
 };
 type FinancialWrite = Pick<FinancialEntry, "kind" | "year" | "month" | "amount" | "vat_included"> & {
   status_id: number;
@@ -66,13 +70,18 @@ const ORIGINAL_ROWS: FinancialWrite[] = PROJECT.financial_entries.map((entry) =>
   article_id: entry.article?.id ?? null, cost_type_id: entry.cost_type?.id ?? null,
 }));
 
-async function mockApi(page: Page, editing = false, options: { financialFailures?: number; finalGet?: Promise<void> } = {}) {
+async function mockApi(page: Page, editing = false, options: {
+  saveFailures?: number;
+  saveGate?: Promise<void>;
+  loseCreateResponse?: boolean;
+  failureField?: string;
+} = {}) {
   const state = {
     current: editing ? structuredClone(PROJECT) : null as Project | null,
     creates: [] as ProjectWrite[],
     updates: [] as ProjectWrite[],
-    financialUpdates: [] as FinancialWrite[][],
     reads: [] as Project[],
+    failReads: false,
     writes: [] as string[],
     nameChecks: [] as { name: string | null; clientId: string | null; excludeId: string | null }[],
     unexpected: [] as string[],
@@ -106,43 +115,51 @@ async function mockApi(page: Page, editing = false, options: { financialFailures
       if (path === `/projects/${PROJECT.id}` && state.current) {
         const snapshot = structuredClone(state.current);
         state.reads.push(snapshot);
-        if (state.financialUpdates.length > (options.financialFailures ?? 1)) await options.finalGet;
+        if (state.failReads) return route.fulfill({ status: 503, body: "" });
         return route.fulfill({ json: snapshot });
       }
     }
-    if (method === "POST" && path === "/projects") {
+    if ((method === "POST" && path === "/projects") ||
+      (method === "PUT" && path === `/projects/${PROJECT.id}` && state.current)) {
       const body: ProjectWrite = request.postDataJSON();
-      state.creates.push(body);
-      state.writes.push("POST /projects");
-      if (state.current) return route.fulfill({ status: 409, json: { detail: "Карточка уже существует" } });
-      state.current = { ...PROJECT, ...body, financial_entries: [], updated_at: "2026-10-25T10:00:00Z" };
-      return route.fulfill({ status: 201, json: state.current });
-    }
-    if (method === "PUT" && path === `/projects/${PROJECT.id}` && state.current) {
-      const body: ProjectWrite = request.postDataJSON();
-      state.updates.push(body);
-      state.writes.push(`PUT /projects/${PROJECT.id}`);
-      state.current = { ...state.current, ...body, updated_at: "2026-10-25T11:00:00Z" };
-      return route.fulfill({ json: state.current });
-    }
-    if (method === "PUT" && path === `/projects/${PROJECT.id}/financial-entries` && state.current) {
-      const rows: FinancialWrite[] = request.postDataJSON();
-      state.financialUpdates.push(rows);
-      state.writes.push(`PUT /projects/${PROJECT.id}/financial-entries`);
-      if (state.financialUpdates.length <= (options.financialFailures ?? 1)) return route.fulfill({ status: 503, body: "" });
-      // GET возвращает сохранённые строки, включая справочники; суммы и НДС не пересчитываются.
+      expect(body).not.toHaveProperty("stage_scheme");
+      const customerScheme = method === "POST" || state.current?.stage_scheme === "customer";
+      if (customerScheme) {
+        expect(body.customer_stage_id).toBe(8);
+        expect(body).not.toHaveProperty("stage");
+        expect(body).not.toHaveProperty("probability");
+      }
+      (method === "POST" ? state.creates : state.updates).push(body);
+      state.writes.push(`${method} ${path}`);
+      expect(Array.isArray(body.financial_entries)).toBe(true);
+      for (const row of body.financial_entries) {
+        expect(Object.keys(row).sort()).toEqual([
+          "amount", "article_id", "cost_type_id", "kind", "month", "status_id", "vat_included", "year",
+        ]);
+      }
+      await options.saveGate;
+      // Отказ атомарной операции оставляет и карточку, и финансы нетронутыми.
+      if (state.writes.length <= (options.saveFailures ?? 1)) {
+        return options.failureField
+          ? route.fulfill({ status: 422, json: { detail: { field: options.failureField, message: "Значение справочника не найдено" } } })
+          : route.fulfill({ status: 503, body: "" });
+      }
+      if (method === "POST" && state.current) return route.fulfill({ status: 409, json: { detail: "Карточка уже существует" } });
+      // Canonical response содержит нормализованные суммы и справочники, без входных *_id.
       state.current = {
-        ...state.current,
+        ...(state.current ?? PROJECT), ...body,
+        ...(customerScheme ? { stage_scheme: "customer", stage: null, customer_stage: REFS.customer_stages[0], probability: 30 } : {}),
         updated_at: "2026-10-25T12:00:00Z",
-        financial_entries: rows.map((row, index) => ({
+        financial_entries: body.financial_entries.map((row, index) => ({
           id: 30 + index, kind: row.kind, year: row.year, month: row.month,
-          amount: row.amount, vat_included: row.vat_included,
+          amount: Number(row.amount).toFixed(3), vat_included: row.vat_included,
           status: (row.kind === "revenue" ? REFS.revenue_statuses : REFS.cost_statuses).find((item) => item.id === row.status_id),
           article: REFS.cost_articles.find((item) => item.id === row.article_id) ?? null,
           cost_type: REFS.cost_types.find((item) => item.id === row.cost_type_id) ?? null,
         })),
       };
-      return route.fulfill({ json: state.current.financial_entries });
+      if (method === "POST" && options.loseCreateResponse) return route.abort("failed");
+      return route.fulfill({ status: method === "POST" ? 201 : 200, json: state.current });
     }
     // Неизвестные запросы не должны попадать в настоящий backend.
     state.unexpected.push(`${method} ${path}`);
@@ -160,7 +177,7 @@ async function fillFinancialRow(row: Locator, entry: FinancialWrite) {
   await row.getByRole("combobox").first().selectOption(entry.kind);
   await row.getByLabel("Год", { exact: true }).fill(String(entry.year));
   await row.getByLabel("Месяц", { exact: true }).selectOption(String(entry.month));
-  await row.getByLabel("Сумма, тыс. рублей").fill(entry.amount);
+  await row.getByLabel("Сумма, тыс. ₽").fill(entry.amount);
   await row.getByLabel("НДС", { exact: true }).selectOption(entry.vat_included ? "yes" : "no");
   if (entry.kind === "cost") {
     await row.getByLabel("Статья затрат").selectOption(String(entry.article_id));
@@ -171,13 +188,13 @@ async function fillFinancialRow(row: Locator, entry: FinancialWrite) {
 }
 
 async function expectFinancialRows(page: Page, entries = FINANCIAL_ROWS) {
-  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveCount(entries.length);
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveCount(entries.length);
   for (const [index, entry] of entries.entries()) {
     const row = financialRow(page, index);
     await expect(row.getByRole("combobox").first()).toHaveValue(entry.kind);
     await expect(row.getByLabel("Год", { exact: true })).toHaveValue(String(entry.year));
     await expect(row.getByLabel("Месяц", { exact: true })).toHaveValue(String(entry.month));
-    await expect(row.getByLabel("Сумма, тыс. рублей")).toHaveValue(entry.amount);
+    await expect(row.getByLabel("Сумма, тыс. ₽")).toHaveValue(entry.amount);
     await expect(row.getByLabel("НДС", { exact: true })).toHaveValue(entry.vat_included ? "yes" : "no");
     await expect(row.getByLabel(entry.kind === "revenue" ? "Статус начисления выручки" : "Статус затрат"))
       .toHaveValue(String(entry.status_id));
@@ -200,15 +217,14 @@ async function expectCard(page: Page, name: string) {
   await expect(page.getByLabel("Планы на период")).toHaveValue("Завершить подключение клиента");
 }
 
-function partialMessage(page: Page) {
+function saveMessage(page: Page) {
   return page.locator(".form-footer .alert");
 }
 
-async function expectPartialSave(page: Page) {
-  await expect(partialMessage(page)).toContainText("Карточка сохранена.");
-  await expect(partialMessage(page)).toContainText("Не удалось подтвердить сохранение финансовых строк.");
-  await expect(partialMessage(page)).toContainText("Повторите сохранение — новая карточка не создастся.");
-  await expect(partialMessage(page)).toContainText("503");
+async function expectFailedSave(page: Page) {
+  await expect(saveMessage(page)).toContainText("503");
+  await expect(saveMessage(page)).not.toContainText("Карточка сохранена");
+  await expect(saveMessage(page)).not.toContainText("новая карточка не создастся");
   await expect(page.getByText(/Сохранено в/)).toHaveCount(0);
   await expect(page.getByText("У этого клиента уже есть проект с таким названием")).toHaveCount(0);
 }
@@ -219,14 +235,13 @@ async function editCard(page: Page, name: string) {
   await page.getByLabel("Планы на период").fill("Завершить подключение клиента");
 }
 
-test("новая карточка: после 503 финансовые строки сохраняются повтором без второго POST", async ({ page }) => {
-  const state = await mockApi(page);
-  const name = "Новый проект с восстановлением финансов";
+async function fillNewProject(page: Page, name: string) {
   await page.goto("/projects/new");
   await editCard(page, name);
   await page.getByLabel(/Клиент/).fill("Тестовый");
   await page.getByRole("button", { name: /Тестовый клиент ИНН/ }).click();
   await page.getByLabel(/Услуга/).selectOption("3");
+  await page.getByLabel("Этап по ТЗ", { exact: false }).selectOption("8");
   await expect(page.getByLabel(/Ответственный/)).toHaveValue(USER.full_name);
   await page.getByLabel(/Сумма контракта/).fill("10000");
   await page.getByLabel(/Себестоимость/).fill("2000");
@@ -236,144 +251,166 @@ test("новая карточка: после 503 финансовые стро�
     await page.getByRole("button", { name: "Добавить финансовую строку", exact: true }).click();
     await fillFinancialRow(financialRow(page, index), entry);
   }
+}
+
+test("создание: атомарный отказ не создаёт карточку, сохраняет ввод и черновик до повтора", async ({ page }) => {
+  const state = await mockApi(page);
+  const name = "Новый проект с атомарными финансами";
+  await fillNewProject(page, name);
   await expect.poll(() => state.nameChecks).toContainEqual({ name, clientId: "10", excludeId: null });
-  const [created, failed] = await Promise.all([
-    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "POST"),
-    page.waitForResponse((response) => response.url().endsWith(`/api/projects/${PROJECT.id}/financial-entries`) && response.status() === 503),
-    page.getByRole("button", { name: "Создать проект", exact: true }).click(),
-  ]);
-  expect(created.status()).toBe(201);
-  expect(failed.request().postDataJSON()).toEqual(FINANCIAL_ROWS);
-  await expectPartialSave(page);
+  await page.getByRole("button", { name: "Создать проект", exact: true }).click();
+  await expectFailedSave(page);
   await expect(page).toHaveURL(/\/projects\/new$/);
   await expectCard(page, name);
   await expectFinancialRows(page);
-  expect(state.current?.financial_entries).toEqual([]);
+  expect(state.current).toBeNull();
   expect(state.creates).toHaveLength(1);
-  expect(state.updates).toHaveLength(0);
-  expect(state.financialUpdates).toEqual([FINANCIAL_ROWS]);
-  await expect.poll(() => state.nameChecks).toContainEqual({ name, clientId: "10", excludeId: String(PROJECT.id) });
-  await expect(page.getByRole("button", { name: "Повторить сохранение", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "Повторить сохранение", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT.id}$`));
+  expect(state.creates[0]).toMatchObject({
+    name, client_id: CLIENT.id, service_id: 3, manager_id: USER.id,
+    amount: "10000.00", cost: "2000.00", financial_entries: FINANCIAL_ROWS,
+  });
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("project-draft") ?? "null")?.name)).toBe(name);
+  await expect(page.getByRole("button", { name: "Создать проект", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Создать проект", exact: true }).click();
+  await expect(page).toHaveURL("/projects/" + PROJECT.id);
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   await expectCard(page, name);
   await expectFinancialRows(page);
-  await expect(partialMessage(page)).toHaveCount(0);
+  await expect(saveMessage(page)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
-  expect(state.creates).toHaveLength(1);
-  expect(state.updates).toEqual(state.creates);
-  expect(state.creates[0]).toMatchObject({ name, client_id: CLIENT.id, service_id: 3, manager_id: USER.id, amount: "10000.00", cost: "2000.00" });
-  expect(state.financialUpdates).toEqual([FINANCIAL_ROWS, FINANCIAL_ROWS]);
-  expect(state.writes).toEqual([
-    "POST /projects", `PUT /projects/${PROJECT.id}/financial-entries`,
-    `PUT /projects/${PROJECT.id}`, `PUT /projects/${PROJECT.id}/financial-entries`,
-  ]);
-  expect(state.reads.at(-1)?.financial_entries).toEqual(state.current?.financial_entries);
+  expect(state.creates).toHaveLength(2);
+  expect(state.creates[1]).toEqual(state.creates[0]);
+  expect(state.updates).toEqual([]);
+  expect(state.writes).toEqual(["POST /projects", "POST /projects"]);
+  expect(state.reads).toEqual([]);
   expect(state.current?.financial_entries).toHaveLength(2);
+  expect(await page.evaluate(() => localStorage.getItem("project-draft"))).toBeNull();
   expect(state.unexpected).toEqual([]);
 });
 
-test("существующая карточка: ошибка финансов сохраняет правки и обе строки до успешного повтора", async ({ page }) => {
+test("редактирование: полный rollback после 503 сохраняет dirty карточку и обе строки до успешного PUT", async ({ page }) => {
   const state = await mockApi(page, true);
-  const name = "Изменённый проект с восстановлением финансов";
-  await page.goto(`/projects/${PROJECT.id}`);
-  await expect(page.getByLabel(/Название проекта/)).toHaveValue(PROJECT.name);
-  await expect.poll(() => state.nameChecks).toContainEqual({ name: PROJECT.name, clientId: "10", excludeId: String(PROJECT.id) });
+  const name = "Изменённый проект с атомарными финансами";
+  await page.goto("/projects/" + PROJECT.id);
   await editCard(page, name);
   for (const [index, entry] of FINANCIAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
-  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
-  await expectPartialSave(page);
-  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT.id}$`));
+  const save = page.getByRole("button", { name: "Сохранить", exact: true });
+  await save.click();
+  await expectFailedSave(page);
   await expectCard(page, name);
   await expectFinancialRows(page);
-  expect(state.current?.name).toBe(name);
-  expect(state.current?.financial_entries).toEqual(PROJECT.financial_entries);
-  expect(state.creates).toHaveLength(0);
+  await expect(save).toBeEnabled();
+  expect(state.current).toEqual(PROJECT);
   expect(state.updates).toHaveLength(1);
-  expect(state.financialUpdates).toEqual([FINANCIAL_ROWS]);
-  await expect.poll(() => state.nameChecks).toContainEqual({ name, clientId: "10", excludeId: String(PROJECT.id) });
-  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
-  await expect(partialMessage(page)).toHaveCount(0);
+  expect(state.updates[0].financial_entries).toEqual(FINANCIAL_ROWS);
+  expect(state.reads).toHaveLength(1);
+  await save.click();
+  await expect(saveMessage(page)).toHaveCount(0);
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  await expect(save).toBeDisabled();
+  await expect(page.getByText(/Сохранено в/)).toBeVisible();
   await expectCard(page, name);
   await expectFinancialRows(page);
-  // Повторное открытие проверяет GET с сохранёнными данными, а не только локальный state формы.
+  // Подтверждение берётся из PUT; GET нужен только при явном повторном открытии.
+  expect(state.reads).toHaveLength(1);
   await page.reload();
   await expectCard(page, name);
   await expectFinancialRows(page);
-  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
-  expect(state.creates).toHaveLength(0);
+  await expect(save).toBeDisabled();
+  expect(state.creates).toEqual([]);
   expect(state.updates).toHaveLength(2);
   expect(state.updates[1]).toEqual(state.updates[0]);
-  expect(state.financialUpdates).toEqual([FINANCIAL_ROWS, FINANCIAL_ROWS]);
-  expect(state.writes).toEqual([
-    `PUT /projects/${PROJECT.id}`, `PUT /projects/${PROJECT.id}/financial-entries`,
-    `PUT /projects/${PROJECT.id}`, `PUT /projects/${PROJECT.id}/financial-entries`,
-  ]);
+  expect(state.writes).toEqual(["PUT /projects/" + PROJECT.id, "PUT /projects/" + PROJECT.id]);
   expect(state.nameChecks.every((check) => check.excludeId === String(PROJECT.id))).toBe(true);
-  expect(state.reads.at(-1)?.financial_entries).toEqual(state.current?.financial_entries);
-  expect(state.current?.financial_entries).toHaveLength(2);
+  expect(state.reads.at(-1)).toEqual(state.current);
   expect(state.unexpected).toEqual([]);
 });
 
-test("IF01: задержанный завершающий GET блокирует поля и финансовые действия до подтверждения", async ({ page }) => {
-  let releaseGet!: () => void;
-  const finalGet = new Promise<void>((resolve) => { releaseGet = resolve; });
-  const state = await mockApi(page, true, { financialFailures: 0, finalGet });
-  const name = "Проект с ожиданием подтверждения";
-  await page.goto(`/projects/${PROJECT.id}`);
-  await editCard(page, name);
-  for (const [index, entry] of FINANCIAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
-  try {
-    await page.getByRole("button", { name: "Сохранить", exact: true }).click();
-    // Первый GET загружает форму, второй остаётся незавершённым после двух успешных PUT.
-    await expect.poll(() => state.reads.length).toBe(2);
-    expect(state.updates).toHaveLength(1);
-    expect(state.financialUpdates).toEqual([FINANCIAL_ROWS]);
-    await expect(page.getByRole("button", { name: "Сохраняем…", exact: true })).toBeDisabled();
-    const fields = page.locator("form.card fieldset");
-    await expect(fields).toHaveCount(2);
-    for (const fieldset of await fields.all()) await expect(fieldset).toHaveAttribute("disabled", "");
-    for (const input of await fields.locator("input, select, textarea, button").all()) await expect(input).toBeDisabled();
-    await expect(page.getByLabel(/Клиент/)).toBeDisabled();
+for (const failureField of ["status_id", "financial_entries.1.status_id"]) {
+  test(`финансовая ошибка 422 (${failureField}) видна и сохраняет dirty ввод до успешного повтора`, async ({ page }) => {
+    const state = await mockApi(page, true, { failureField });
+    const name = "Проект с отклонённым справочником финансов";
+    await page.goto("/projects/" + PROJECT.id);
+    await editCard(page, name);
+    for (const [index, entry] of FINANCIAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
+    const save = page.getByRole("button", { name: "Сохранить", exact: true });
+    await save.click();
+    await expect(saveMessage(page)).toContainText("Значение справочника не найдено");
     await expectCard(page, name);
     await expectFinancialRows(page);
-    await expect(page.getByText(/Сохранено в/)).toHaveCount(0);
-  } finally {
-    releaseGet();
-  }
-  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
-  await expect(page.getByLabel("Суть проекта")).toBeEnabled();
-  await expect(page.getByLabel(/Клиент/)).toBeEnabled();
-  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. рублей")).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Добавить финансовую строку", exact: true })).toBeEnabled();
-  await expectCard(page, name);
-  await expectFinancialRows(page);
-  expect(state.creates).toHaveLength(0);
-  expect(state.current?.description).toBe("Правки до сбоя финансового сервиса");
-  expect(state.unexpected).toEqual([]);
-});
+    await expect(save).toBeEnabled();
+    expect(state.current).toEqual(PROJECT);
+    await save.click();
+    await expect(saveMessage(page)).toHaveCount(0);
+    await expect(save).toBeDisabled();
+    await expectCard(page, name);
+    await expectFinancialRows(page);
+    expect(state.updates).toHaveLength(2);
+    expect(state.updates[1]).toEqual(state.updates[0]);
+    expect(state.creates).toEqual([]);
+    expect(state.unexpected).toEqual([]);
+  });
+}
 
-test("IF02: возврат всех правок к исходным значениям после 503 оставляет повтор доступным", async ({ page }) => {
+for (const editing of [false, true]) {
+  test((editing ? "PUT" : "POST") + ": незавершённое сохранение блокирует все поля и повторную отправку", async ({ page }) => {
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const state = await mockApi(page, editing, { saveFailures: 0, saveGate });
+    const name = "Проект с ожиданием атомарного сохранения";
+    if (editing) {
+      await page.goto("/projects/" + PROJECT.id);
+      await editCard(page, name);
+      for (const [index, entry] of FINANCIAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
+    } else {
+      await fillNewProject(page, name);
+    }
+    try {
+      await page.getByRole("button", { name: editing ? "Сохранить" : "Создать проект", exact: true }).click();
+      await expect.poll(() => state.writes.length).toBe(1);
+      await expect(page.getByRole("button", { name: "Сохраняем…", exact: true })).toBeDisabled();
+      const fields = page.locator("form.card fieldset");
+      await expect(fields).toHaveCount(2);
+      for (const fieldset of await fields.all()) await expect(fieldset).toHaveAttribute("disabled", "");
+      for (const input of await fields.locator("input, select, textarea, button").all()) await expect(input).toBeDisabled();
+      await expect(page.getByLabel(/Клиент/)).toBeDisabled();
+      // Даже повторное событие submit, минующее disabled-кнопку, не запускает второй запрос.
+      await page.locator("form.card").evaluate((form: HTMLFormElement) => { form.requestSubmit(); form.requestSubmit(); });
+      await expect(page.getByRole("button", { name: "Сохраняем…", exact: true })).toBeDisabled();
+      await expectCard(page, name);
+      await expectFinancialRows(page);
+      await expect(page.getByText(/Сохранено в/)).toHaveCount(0);
+      expect(state.current).toEqual(editing ? PROJECT : null);
+      expect(state.writes).toHaveLength(1);
+    } finally {
+      releaseSave();
+    }
+    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+    await expect(page.getByLabel("Суть проекта")).toBeEnabled();
+    await expect(page.getByLabel(/Клиент/)).toBeEnabled();
+    await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Добавить финансовую строку", exact: true })).toBeEnabled();
+    await expectCard(page, name);
+    await expectFinancialRows(page);
+    expect(state.writes).toHaveLength(1);
+    expect(state.reads).toHaveLength(editing ? 1 : 0);
+    expect(state.unexpected).toEqual([]);
+  });
+}
+
+test("после rollback возврат всего ввода к baseline не требует повторной записи", async ({ page }) => {
   const state = await mockApi(page, true);
-  const name = "Имя уже записано на сервере";
-  await page.goto(`/projects/${PROJECT.id}`);
+  await page.goto("/projects/" + PROJECT.id);
   const save = page.getByRole("button", { name: "Сохранить", exact: true });
   await expect(save).toBeDisabled();
-  await editCard(page, name);
+  await editCard(page, "Проект с несохранёнными правками");
   await page.getByLabel(/Сумма контракта/).fill("12000");
   await page.getByLabel(/Себестоимость/).fill("2500");
   for (const [index, entry] of FINANCIAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
   await save.click();
-  await expectPartialSave(page);
-  expect(state.current?.name).toBe(name);
-  expect(state.current?.financial_entries).toEqual(PROJECT.financial_entries);
-
-  // Возвращаем каждое изменённое поле и строку к baseline, без посторонней правки для разблокировки.
+  await expectFailedSave(page);
+  expect(state.current).toEqual(PROJECT);
   await page.getByLabel(/Название проекта/).fill(PROJECT.name);
   await page.getByLabel("Суть проекта").fill(PROJECT.description);
   await page.getByLabel("Планы на период").fill(PROJECT.period_plan);
@@ -381,28 +418,106 @@ test("IF02: возврат всех правок к исходным значе�
   await page.getByLabel(/Себестоимость/).fill(String(Number(PROJECT.cost)));
   for (const [index, entry] of ORIGINAL_ROWS.entries()) await fillFinancialRow(financialRow(page, index), entry);
   await expectFinancialRows(page, ORIGINAL_ROWS);
-  await expect(save).toBeEnabled();
-  await expectPartialSave(page);
-  expect(state.current?.name).toBe(name);
+  await expect(save).toBeDisabled();
+  expect(state.current).toEqual(PROJECT);
   expect(state.updates).toHaveLength(1);
-  await save.click();
-  await expect(partialMessage(page)).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: PROJECT.name, exact: true })).toBeVisible();
-  await expect(save).toBeDisabled();
+  expect(state.creates).toEqual([]);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("удаление всех финансов отправляет [] вместе с карточкой и подтверждается без GET", async ({ page }) => {
+  const state = await mockApi(page, true, { saveFailures: 0 });
+  await page.goto("/projects/" + PROJECT.id);
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveCount(2);
+  await page.getByRole("group", { name: "Помесячная выручка и затраты" }).getByRole("button", { name: "Удалить", exact: true }).first().click();
+  await page.getByRole("group", { name: "Помесячная выручка и затраты" }).getByRole("button", { name: "Удалить", exact: true }).click();
+  await page.getByLabel("Суть проекта").fill("Финансовые строки очищены");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.getByText(/Сохранено в/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.updates).toHaveLength(1);
+  expect(state.updates[0]).toMatchObject({ description: "Финансовые строки очищены", financial_entries: [] });
+  expect(state.current?.financial_entries).toEqual([]);
+  expect(state.reads).toHaveLength(1);
   await page.reload();
-  await expect(page.getByLabel(/Название проекта/)).toHaveValue(PROJECT.name);
-  await expect(page.getByLabel("Суть проекта")).toHaveValue(PROJECT.description);
-  await expect(page.getByLabel("Планы на период")).toHaveValue(PROJECT.period_plan);
-  await expectFinancialRows(page, ORIGINAL_ROWS);
-  await expect(save).toBeDisabled();
-  expect(state.creates).toHaveLength(0);
-  expect(state.updates).toHaveLength(2);
-  expect(state.updates[1]).toEqual({
-    ...state.updates[0], name: PROJECT.name, description: PROJECT.description,
-    period_plan: PROJECT.period_plan, amount: PROJECT.amount, cost: PROJECT.cost,
+  await expect(page.getByLabel("Суть проекта")).toHaveValue("Финансовые строки очищены");
+  await expectFinancialRows(page, []);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("canonical response нормализует финансовый baseline без обязательного refetch", async ({ page }) => {
+  const state = await mockApi(page, true, { saveFailures: 0 });
+  await page.goto("/projects/" + PROJECT.id);
+  await financialRow(page, 0).getByLabel("Сумма, тыс. ₽").fill("1234.5");
+  // Любой последующий GET не сможет подтвердить сохранение.
+  state.failReads = true;
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.getByText(/Сохранено в/)).toBeVisible();
+  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toHaveValue("1234.500");
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  await expect(saveMessage(page)).toHaveCount(0);
+  expect(state.updates[0].financial_entries[0].amount).toBe("1234.5");
+  expect(state.reads).toHaveLength(1);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("подтверждённый POST и последующий сбой refetch: новая правка сохраняется PUT без дубля", async ({ page }) => {
+  const state = await mockApi(page, false, { saveFailures: 0 });
+  await page.clock.install();
+  const name = "Созданный проект до сбоя чтения";
+  await fillNewProject(page, name);
+  await page.getByRole("button", { name: "Создать проект", exact: true }).click();
+  await expect(page).toHaveURL("/projects/" + PROJECT.id);
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.reads).toEqual([]);
+  state.failReads = true;
+  await page.clock.fastForward(6 * 60_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
   });
-  expect(state.financialUpdates).toEqual([FINANCIAL_ROWS, ORIGINAL_ROWS]);
-  expect(state.reads.at(-1)?.name).toBe(PROJECT.name);
-  expect(state.current?.financial_entries).toHaveLength(ORIGINAL_ROWS.length);
+  const readError = page.getByRole("alert").filter({ hasText: "Не удалось загрузить проект" });
+  await expect(readError).toContainText("503");
+  await expect(saveMessage(page)).toHaveCount(0);
+  await expectCard(page, name);
+  await expectFinancialRows(page);
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  const nextName = "Правки подтверждённого проекта";
+  await page.getByLabel(/Название проекта/).fill(nextName);
+  await page.getByLabel("Суть проекта").focus();
+  await expect.poll(() => state.nameChecks).toContainEqual({ name: nextName, clientId: "10", excludeId: String(PROJECT.id) });
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.getByRole("heading", { name: nextName, exact: true })).toBeVisible();
+  await expect(page.getByText(/Сохранено в/)).toBeVisible();
+  await expect(saveMessage(page)).toHaveCount(0);
+  await expect(readError).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.creates).toHaveLength(1);
+  expect(state.updates).toHaveLength(1);
+  expect(state.updates[0].financial_entries).toEqual(FINANCIAL_ROWS);
+  expect(state.writes).toEqual(["POST /projects", "PUT /projects/" + PROJECT.id]);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("потерянный ответ создания сохраняет ввод и предупреждает о неопределённом исходе без обещания идемпотентности", async ({ page }) => {
+  const state = await mockApi(page, false, { saveFailures: 0, loseCreateResponse: true });
+  const name = "Проект с потерянным ответом POST";
+  await fillNewProject(page, name);
+  await page.getByRole("button", { name: "Создать проект", exact: true }).click();
+  await expect(saveMessage(page)).toContainText("Проверьте список проектов перед повтором: проект мог быть создан.");
+  await expect(saveMessage(page)).not.toContainText("новая карточка не создастся");
+  await expect(page.getByText(/Сохранено в/)).toHaveCount(0);
+  await expect(page).toHaveURL(/\/projects\/new$/);
+  await expectCard(page, name);
+  await expectFinancialRows(page);
+  await expect(page.getByRole("button", { name: "Создать проект", exact: true })).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("project-draft") ?? "null")?.name)).toBe(name);
+  // Сервер успел записать всё, но без ответа с id клиент не может гарантировать безопасный повтор POST.
+  expect(state.current?.name).toBe(name);
+  expect(state.current?.financial_entries).toHaveLength(2);
+  expect(state.creates).toHaveLength(1);
+  expect(state.updates).toEqual([]);
+  expect(state.writes).toEqual(["POST /projects"]);
   expect(state.unexpected).toEqual([]);
 });

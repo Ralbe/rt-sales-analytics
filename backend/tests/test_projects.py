@@ -2,28 +2,12 @@ import random
 from io import BytesIO
 
 from openpyxl import load_workbook
+from project_factories import create_legacy_project, legacy_payload
+from project_factories import customer_payload as _payload
 from sqlalchemy import select
 
-from app.models import AuditLog, Client, Project, Service, User
+from app.models import AuditLog, Client, Project, User
 from app.seed import generate_inn
-
-
-def _payload(db, **overrides):
-    client = db.scalars(select(Client).order_by(Client.id)).first()
-    service = db.scalars(select(Service).order_by(Service.id)).first()
-    data = {
-        "name": "Новый тестовый проект",
-        "description": "",
-        "client_id": client.id,
-        "service_id": service.id,
-        "stage": "proposal",
-        "amount": "1500000.00",
-        "cost": "900000.00",
-        "probability": 50,
-        "start_date": "2026-10-01",
-        "expected_close_date": "2026-12-31",
-    }
-    return data | overrides
 
 
 def test_project_audit_records_nonfinancial_changes(as_user, db):
@@ -84,8 +68,10 @@ def test_validation_errors(as_user, db):
 
 
 def test_closing_sets_closed_at(as_user, db):
-    created = as_user.post("/api/projects", json=_payload(db, name="Проект на закрытие")).json()
-    won = as_user.put(f"/api/projects/{created['id']}", json=_payload(db, name="Проект на закрытие", stage="won"))
+    created = create_legacy_project(db, name="Проект на закрытие")
+    won = as_user.put(
+        f"/api/projects/{created.id}", json=legacy_payload(db, name="Проект на закрытие", stage="won"),
+    )
     assert won.status_code == 200
     assert won.json()["closed_at"] is not None
 
@@ -166,7 +152,8 @@ def test_customer_spec_references_and_project_fields(as_user, db):
     project = response.json()
     assert project["customer_stage"]["id"] == selected_stage["id"]
     assert project["probability"] == selected_stage["probability"]
-    assert project["stage"] == "proposal"
+    assert project["stage"] is None
+    assert project["stage_scheme"] == "customer"
     assert project["payment_type"]["id"] == payment_type["id"]
     assert project["indicator"]["name"] == "Снят"
     assert project["assessment_status"]["id"] == assessment["id"]

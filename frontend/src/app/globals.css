@@ -5,7 +5,7 @@
   --border: #e3e6ee;
   --text: #1c1f2b;
   --muted: #6b7183;
-  --accent: #6c3fd1;
+  --accent: #7700FF;
   --accent-soft: #efe9fc;
   --accent-text: #ffffff;
   --sidebar: #241a42;
@@ -35,7 +35,7 @@ h2 { font-size: 16px; margin: 0; font-weight: 600; }
 
 .sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; overflow-y: auto; }
 .sidebar .brand { font-weight: 700; color: #fff; font-size: 16px; padding: 4px 10px 14px; letter-spacing: .2px; }
-.sidebar .brand span { color: #ff8a3d; }
+.sidebar .brand span { color: #FF4F12; }
 .sidebar .section { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; opacity: .6; padding: 14px 10px 4px; }
 .sidebar a, .sidebar button.link { display: block; color: var(--sidebar-text); padding: 7px 10px; border-radius: 8px; font-size: 14px; background: none; border: 0; text-align: left; width: 100%; cursor: pointer; font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sidebar a:hover, .sidebar button.link:hover { background: rgba(255,255,255,.06); }

@@ -35,6 +35,8 @@ def test_seed_preserves_existing_catalogs_without_autoflush():
         assert set(SPEC_SERVICES) <= set(db.scalars(select(Service.name)))
         assert all(project.service is not None and project.client.segment is not None
                    for project in db.scalars(select(Project)))
+        assert all(project.stage_scheme == "legacy" and project.stage is not None
+                   for project in db.scalars(select(Project)))
 
         counts = [db.scalar(select(func.count()).select_from(model))
                   for model in (User, Client, Project, Segment, Service, ReferenceValue)]

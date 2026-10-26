@@ -6,10 +6,11 @@ import { createPortal } from "react-dom";
 
 import { date } from "@/lib/format";
 import { useMe, useRefs } from "@/lib/hooks";
+import { resolveProjectFieldLabels } from "@/lib/project-field-labels";
 import type { BreakdownResponse, DashboardFilters, KpiResponse, ProjectPage, Refs, TrendResponse, User, Widget, WidgetType } from "@/lib/types";
 
 import { widgetQueryKey } from "./widget-data";
-import { BreakdownView, KpiView, ProjectsView, TrendView } from "./widgets";
+import { BreakdownView, KpiView, ProjectsView, TrendView, type ProjectsViewLabels } from "./widgets";
 
 interface Props {
   name: string;
@@ -25,6 +26,7 @@ interface Snapshot {
   filters: { label: string; value: string }[];
   scope: string;
   widgets: WidgetSnapshot[];
+  projectLabels: ProjectsViewLabels;
 }
 
 const timestamp = (value: number) => new Intl.DateTimeFormat("ru-RU", {
@@ -153,11 +155,13 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
     running.current = true;
     setError(null);
     setPhase("preparing");
+    const labels = resolveProjectFieldLabels(refs.data.project_field_labels);
     setSnapshot({
       name,
       generatedAt: timestamp(Date.now()),
       filters: filterLabels(filters, refs.data),
       scope: scopeLabel(me.data),
+      projectLabels: { name: labels.name, client_id: labels.client_id, manager_id: labels.manager_id, amount: labels.amount },
       widgets: [...widgets].sort((a, b) => a.y - b.y || a.x - b.x).map((widget) => {
         const state = client.getQueryState<Responses[WidgetType]>(widgetQueryKey(widget, filters))!;
         return { type: widget.type, widget: structuredClone(widget), data: structuredClone(state.data!), loadedAt: timestamp(state.dataUpdatedAt) } as WidgetSnapshot;
@@ -188,7 +192,7 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
                 <p>Область доступа: {snapshot.scope}</p>
               </header>
               {snapshot.widgets.length === 0 && <p>На текущем дашборде нет виджетов.</p>}
-              {snapshot.widgets.map((item) => <PrintableWidget key={item.widget.id} item={item} />)}
+              {snapshot.widgets.map((item) => <PrintableWidget key={item.widget.id} item={item} projectLabels={snapshot.projectLabels} />)}
             </>
           ) : <p>Печатная версия не подготовлена. Вернитесь на дашборд и нажмите «PDF / Печать» после загрузки всех виджетов.</p>}
         </section>, target,
@@ -201,7 +205,7 @@ function range(points: { date: string }[]) {
   return points.length ? `${date(points[0].date)} — ${date(points[points.length - 1].date)}` : "Нет данных";
 }
 
-function PrintableWidget({ item }: { item: WidgetSnapshot }) {
+function PrintableWidget({ item, projectLabels }: { item: WidgetSnapshot; projectLabels: ProjectsViewLabels }) {
   const { widget } = item;
   return (
     <article className="print-widget" data-widget-id={widget.id}>
@@ -219,7 +223,7 @@ function PrintableWidget({ item }: { item: WidgetSnapshot }) {
       {item.type === "kpi" && <KpiView widget={widget} data={item.data} />}
       {item.type === "trend" && <TrendView widget={widget} data={item.data} printable />}
       {item.type === "breakdown" && <BreakdownView widget={widget} data={item.data} printable />}
-      {item.type === "projects" && <ProjectsView data={item.data} printable />}
+      {item.type === "projects" && <ProjectsView data={item.data} labels={projectLabels} printable />}
     </article>
   );
 }
