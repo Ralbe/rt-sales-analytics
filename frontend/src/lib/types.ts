@@ -51,6 +51,7 @@ export interface Project {
   name: string;
   description: string;
   client: RefItem;
+  client_inn?: string;
   segment: RefItem;
   manager: ManagerItem;
   service: ServiceItem;
