@@ -131,8 +131,8 @@ class ProjectIn(BaseModel):
     manager_id: int | None = None
     service_id: int
     stage: Stage
-    amount: Decimal = Field(ge=0, le=Decimal("1e12"), decimal_places=2)
-    cost: Decimal = Field(default=Decimal("0"), ge=0, le=Decimal("1e12"), decimal_places=2)
+    amount: Decimal = Field(ge=0, le=Decimal("999999999999.99"), decimal_places=2)
+    cost: Decimal = Field(default=Decimal("0"), ge=0, le=Decimal("999999999999.99"), decimal_places=2)
     probability: int = Field(ge=0, le=100)
     start_date: date
     expected_close_date: date
@@ -210,7 +210,7 @@ class ProjectFinancialEntryIn(BaseModel):
     kind: Literal["revenue", "cost"]
     year: int = Field(ge=1900, le=2200)
     month: int = Field(ge=1, le=12)
-    amount: Decimal = Field(ge=0, le=Decimal("1e12"), decimal_places=3)
+    amount: Decimal = Field(ge=0, le=Decimal("999999999999.999"), decimal_places=3)
     vat_included: bool
     status_id: int
     article_id: int | None = None

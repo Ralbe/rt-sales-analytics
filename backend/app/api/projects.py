@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core import cache
@@ -272,8 +273,11 @@ def export_projects(
     )
 
 
-def _get_visible(db: Session, project_id: int, user: User) -> Project:
-    project = db.get(Project, project_id)
+def _get_visible(db: Session, project_id: int, user: User, *, for_update: bool = False) -> Project:
+    query = select(Project).where(Project.id == project_id)
+    if for_update:
+        query = query.with_for_update(of=Project).execution_options(populate_existing=True)
+    project = db.scalar(query)
     scope = manager_scope(user)
     if project is None or (scope is not None and project.manager_id != scope):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Проект не найден")
@@ -313,6 +317,14 @@ def _find_duplicate(db: Session, name: str, client_id: int, exclude_id: int | No
         stmt = stmt.where(Project.id != exclude_id)
     key = name.casefold()
     return next((p for p in db.scalars(stmt).unique() if p.name.casefold() == key), None)
+
+
+def _check_integrity_conflict(db: Session, data: ProjectIn, project_id: int | None = None) -> None:
+    db.rollback()
+    if _find_duplicate(db, data.name, data.client_id, project_id) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, {"field": "name", "message": "У этого клиента уже есть проект с таким названием"}
+        ) from None
 
 
 def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
@@ -386,6 +398,9 @@ def create_project(
         if data.financial_entries is not None:
             _replace_financial_entries(db, project, data.financial_entries, references, user)
         db.commit()
+    except IntegrityError:
+        _check_integrity_conflict(db, data)
+        raise
     except Exception:
         db.rollback()
         raise
@@ -401,7 +416,7 @@ def update_project(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
-    project = _get_visible(db, project_id, user)
+    project = _get_visible(db, project_id, user, for_update=True)
     try:
         references = _validate_financial_entries(db, data.financial_entries or [])
         before = project_snapshot(db, project)
@@ -419,6 +434,9 @@ def update_project(
             finances_changed = _replace_financial_entries(db, project, data.financial_entries, references, user)
             changed = changed or finances_changed
         db.commit()
+    except IntegrityError:
+        _check_integrity_conflict(db, data, project_id)
+        raise
     except Exception:
         db.rollback()
         raise
@@ -509,7 +527,7 @@ def replace_financial_entries(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> list[ProjectFinancialEntry]:
-    project = _get_visible(db, project_id, user)
+    project = _get_visible(db, project_id, user, for_update=True)
     try:
         references = _validate_financial_entries(db, entries)
         changed = _replace_financial_entries(db, project, entries, references, user)
