@@ -103,6 +103,7 @@ test("новая карточка: один обязательный селек�
   await expect(page.locator("#stage")).toHaveCount(0);
   await expect(probability).toHaveAttribute("readonly", "");
   await expect(probability).toHaveValue("");
+  await expect(page.locator("[data-completion-state]")).toHaveText("Состояние завершения: не определено");
   await expect(page.getByRole("region", { name: "История изменений" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "PDF / Печать карточки", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Создать проект", exact: true }).click();
@@ -116,6 +117,7 @@ test("новая карточка: один обязательный селек�
   await expect(probability).toHaveValue("3");
   await stage.selectOption("110");
   await expect(probability).toHaveValue("100");
+  await expect(page.locator("[data-completion-state]")).toHaveText("Состояние завершения: не определено");
   await page.getByRole("button", { name: "Создать проект", exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/42$/);
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
@@ -123,13 +125,15 @@ test("новая карточка: один обязательный селек�
   expect(state.writes).toHaveLength(1);
   expect(state.writes[0]).toMatchObject({ customer_stage_id: 110, financial_entries: [] });
   expect(state.current).toMatchObject({ stage_scheme: "customer", stage: null, probability: 100 });
+  expect(state.current?.closed_at).toBeNull();
   expect(state.unexpected).toEqual([]);
 });
 
-test("прежняя карточка без stage_scheme: шесть стадий, пассивный auxiliary, прежний автопроцент и ручная вероятность", async ({ page }) => {
+test("прежняя карточка без stage_scheme: смена стадии сохраняет 37%, процент меняется только явным вводом", async ({ page }) => {
   const state = await mockApi(page);
   await page.goto("/projects/42");
   await expect(page.locator("#stage").getByRole("option")).toHaveCount(6);
+  await expect(page.locator("[data-completion-state]")).toHaveCount(0);
   await expect(page.locator("#stage")).toHaveValue("proposal");
   const auxiliary = page.getByLabel("Этап по ТЗ", { exact: false });
   await expect(auxiliary).toHaveAttribute("readonly", "");
@@ -138,14 +142,20 @@ test("прежняя карточка без stage_scheme: шесть стади
   await expect(probability).toHaveValue("37");
   await expect(probability).not.toHaveAttribute("readonly", "");
   await page.locator("#stage").selectOption("negotiation");
-  await expect(probability).toHaveValue("75");
+  await expect(probability).toHaveValue("37");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.writes[0]).toMatchObject({ stage: "negotiation", probability: 37 });
+  expect(state.current?.probability).toBe(37);
   await probability.fill("43");
   await page.locator("#stage").selectOption("qualification");
   await page.getByLabel("Суть проекта").fill("Изменение прежней карточки");
   await expect(probability).toHaveValue("43");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
   await expect(page.getByText(/Сохранено в/)).toBeVisible();
-  expect(state.writes[0]).toMatchObject({ stage: "qualification", probability: 43 });
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.writes).toHaveLength(2);
+  expect(state.writes[1]).toMatchObject({ stage: "qualification", probability: 43 });
   expect(state.current?.customer_stage).toEqual(LEGACY.customer_stage);
   await page.reload();
   await expect(auxiliary).toHaveValue(CUSTOMER_STAGES[2].name);
@@ -161,6 +171,7 @@ test("customer PUT: прочая правка сохраняет серверн�
   const probability = page.getByLabel("Вероятность", { exact: false });
   const stage = page.getByLabel("Этап по ТЗ", { exact: false });
   await expect(probability).toHaveValue("17");
+  await expect(page.locator("[data-completion-state]")).toHaveText("Состояние завершения: не определено");
   await expect(probability).toHaveAttribute("readonly", "");
   // Сохранено 17, хотя refs исходного этапа теперь содержит 11: возврат A→B→A не обещает пересчёт.
   await stage.selectOption("103");

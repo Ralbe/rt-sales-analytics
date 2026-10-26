@@ -14,7 +14,7 @@ import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
 import { useProjectFieldLabels } from "@/lib/project-field-labels";
 import { projectHistoryKey } from "@/lib/history-types";
-import type { FinancialEntry, Project, Stage } from "@/lib/types";
+import type { FinancialEntry, Project } from "@/lib/types";
 
 const DRAFT_KEY = "project-draft";
 const STAGES = ["lead", "qualification", "proposal", "negotiation", "won", "lost"] as const;
@@ -195,7 +195,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       mode: "onTouched", // ошибка появляется, как только пользователь ушёл с поля
       defaultValues: fromProject(project, me?.id),
     });
-  const { errors, isSubmitting, isDirty, dirtyFields, touchedFields } = formState;
+  const { errors, isSubmitting, isDirty, touchedFields } = formState;
   const hasUnsavedChanges = isDirty || financialDirty;
 
   // Фоновое обновление не должно затирать несохранённый ввод.
@@ -250,12 +250,6 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   useEffect(() => {
     if (values.client?.id) checkName();
   }, [values.client?.id, checkName]);
-
-  const onStageChange = (stage: Stage) => {
-    // Вероятность подставляется автоматически, пока пользователь не ввёл её сам
-    const def = refs?.stages.find((s) => s.id === stage)?.probability;
-    if (def !== undefined && !dirtyFields.probability) setValue("probability", String(def), { shouldValidate: true });
-  };
 
   const onCustomerStageChange = (stageId: string) => {
     const stage = refs?.customer_stages.find((item) => String(item.id) === stageId);
@@ -498,6 +492,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 </select> : <input id="customer_stage_id" className="input" readOnly value={project?.customer_stage?.name ?? "Не указан"} />}
                 {customerScheme ? <div className="error">{err("customer_stage_id")}</div> :
                   <div className="hint">Сохранённый вспомогательный этап. Не изменяет прежнюю стадию и вероятность.</div>}
+                {customerScheme && <div className="hint" role="note" data-completion-state="unknown">Состояние завершения: не определено</div>}
               </div>
               <div className={cls("implementation_year")}>
                 <label htmlFor="implementation_year">{label("implementation_year")}</label>
@@ -584,7 +579,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <select
                   id="stage"
                   className="select"
-                  {...register("stage", { onChange: (e) => onStageChange(e.target.value as Stage) })}
+                  {...register("stage")}
                 >
                   {!values.stage && <option value="">— выберите стадию —</option>}
                   {refs?.stages.map((s) => (

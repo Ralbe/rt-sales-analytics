@@ -101,11 +101,13 @@ export interface FinancialEntry {
   cost_type?: RefItem | null;
 }
 
-export interface ProjectPage extends AnalyticsScope {
+export interface ProjectPage {
   items: Project[];
   total: number;
   page: number;
   size: number;
+  stage_scope?: "all" | "legacy";
+  scope_note?: string | null;
 }
 
 export type KpiKey = "funnel" | "projects" | "won_ytd";
@@ -121,8 +123,8 @@ export interface KpiItem {
 }
 
 export interface AnalyticsScope {
-  stage_scope?: "legacy" | "all";
-  scope_note?: string | null;
+  stage_scope?: "legacy";
+  scope_note?: string;
 }
 
 export interface KpiResponse extends AnalyticsScope {

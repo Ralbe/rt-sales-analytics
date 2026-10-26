@@ -78,7 +78,7 @@ test("вход с TOTP, стартовый реестр и создание пр
   await page.waitForURL((url) => url.pathname === "/projects");
   await expect(page.getByRole("heading", { name: "Проекты", exact: true })).toBeVisible();
 
-  await page.getByRole("link", { name: "Новый проект" }).click();
+  await page.getByRole("main").getByRole("link", { name: "+ Новый проект", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Новый проект" })).toBeVisible();
 
   const projectName = `E2E-проект-${randomUUID()}`;

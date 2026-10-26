@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import type { Project, Refs } from "../../src/lib/types";
+import type { Project, ProjectPage, Refs } from "../../src/lib/types";
 
 const manager = { id: 1, full_name: "Тестовый менеджер" };
 const refs: Refs = {
@@ -44,10 +44,16 @@ async function mockApi(page: Page, items = [project()], total = items.length) {
     if (url.pathname === "/api/dashboards") return route.fulfill({ json: [] });
     if (url.pathname === "/api/projects") {
       requests.push(url.searchParams);
-      const filtered = url.searchParams.get("open_only") === "true"
+      const openOnly = url.searchParams.get("open_only") === "true";
+      const filtered = openOnly
         ? items.filter((item) => item.stage_scheme !== "customer" && item.stage !== null && !["won", "lost"].includes(item.stage))
         : items;
-      return route.fulfill({ json: { items: filtered, total: filtered === items ? total : filtered.length, page: Number(url.searchParams.get("page")), size: 20 } });
+      const result: ProjectPage = {
+        items: filtered, total: filtered === items ? total : filtered.length, page: Number(url.searchParams.get("page")), size: 20,
+        stage_scope: openOnly ? "legacy" : "all",
+        scope_note: openOnly ? "Показатели рассчитаны только по проектам с прежними шестью стадиями. Проекты с новыми этапами не включены." : null,
+      };
+      return route.fulfill({ json: result });
     }
     return route.fulfill({ status: 404, json: { detail: "Тестовый маршрут не найден" } });
   });

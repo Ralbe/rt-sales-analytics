@@ -118,6 +118,20 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     expect((await xlsx.body()).subarray(0, 2).toString()).toBe("PK");
     expect((await member.request.get("/api/projects/export.xlsx")).status()).toBe(403);
 
+    const allProjectsResponse = await page.request.get(`/api/projects?manager_id=${created.id}`);
+    expect(allProjectsResponse.status()).toBe(200);
+    const allProjects = await allProjectsResponse.json();
+    expect(allProjects.stage_scope).toBe("all");
+    expect(allProjects.scope_note).toBeNull();
+    expect(allProjects.items).toContainEqual(expect.objectContaining({ id: project.id, stage_scheme: "customer", stage: null }));
+    const topResponse = await page.request.get(`/api/projects?manager_id=${created.id}&open_only=true`);
+    expect(topResponse.status()).toBe(200);
+    const top = await topResponse.json();
+    expect(top.stage_scope).toBe("legacy");
+    expect(top.scope_note).toBe("Показатели рассчитаны только по проектам с прежними шестью стадиями. Проекты с новыми этапами не включены.");
+    expect(top.items).toEqual([]);
+    expect(top.total).toBe(0);
+
     const reportResponse = await page.request.post("/api/dashboards", { data: {
       name: `Отчёт приёмки ${suffix}`, is_shared: false,
       filters: { segment_ids: [project.segment.id], service_ids: [project.service.id], manager_ids: [created.id] },
@@ -130,6 +144,9 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     const report = await reportResponse.json();
     await page.goto(`/dashboards/${report.id}`);
     await expect(page.getByRole("button", { name: "PDF / Печать" })).toBeEnabled();
+    const liveProjects = page.locator(".widget").filter({ hasText: "Проекты приёмки" });
+    await expect(liveProjects.locator("[data-stage-scope]")).toHaveText(top.scope_note);
+    await expect(liveProjects.locator("tbody tr")).toHaveCount(0);
     await page.evaluate(() => {
       (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted = false;
       window.print = () => { (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted = true; };
@@ -137,7 +154,9 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     await page.getByRole("button", { name: "PDF / Печать" }).click();
     await expect.poll(() => page.evaluate(() => (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted)).toBe(true);
     const surface = page.locator("[data-dashboard-print]");
-    await expect(surface).toContainText(project.name);
+    await expect(surface).not.toContainText(project.name);
+    await expect(surface.locator('[data-widget-id="projects"] [data-stage-scope]')).toHaveText(top.scope_note);
+    await expect(surface.locator('[data-widget-id="count"] [data-stage-scope]')).toHaveText(top.scope_note);
     await expect(surface).toContainText(newName);
     await expect(surface).toContainText(project.segment.name);
     await page.emulateMedia({ media: "print" });
