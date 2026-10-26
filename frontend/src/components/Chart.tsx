@@ -6,7 +6,7 @@ import { useState } from "react";
 
 const ReactECharts = dynamic(() => import("./ChartRenderer"), { ssr: false });
 
-export const PALETTE = ["#6c3fd1", "#ff8a3d", "#2b9bd8", "#1a8f5a", "#d6457a", "#c9a227", "#4a6fe3", "#8a8f9f"];
+export const PALETTE = ["#7700FF", "#FF4F12", "#2b9bd8", "#1a8f5a", "#d6457a", "#c9a227", "#4a6fe3", "#8a8f9f"];
 
 export function Chart({ option, printable = false }: { option: EChartsOption; printable?: boolean }) {
   const [ready, setReady] = useState(false);
