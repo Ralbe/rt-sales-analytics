@@ -221,3 +221,32 @@ test("F4: корневой маршрут открывает полный рее
   expect(requests.at(-1)?.has("open_only")).toBe(false);
   expect(requests.at(-1)?.has("stage")).toBe(false);
 });
+
+test("реестр отмечает проекты, созданные в выбранном периоде UTC", async ({ page }) => {
+  const items = [
+    project({ id: 1, name: "Начало периода", created_at: "2026-10-01T00:00:00Z" }),
+    project({ id: 2, name: "Конец периода", created_at: "2026-11-01T02:59:59+03:00" }),
+    project({ id: 3, name: "Старый изменённый проект", created_at: "2026-09-30T23:59:59Z", updated_at: "2026-10-15T12:00:00Z" }),
+    project({ id: 4, name: "После периода", created_at: "2026-11-01T00:00:00Z" }),
+  ];
+  await mockApi(page, items);
+  await page.goto("/projects");
+  const row = (name: string) => page.getByRole("row").filter({ hasText: name });
+  const start = page.getByLabel("Начало периода создания (UTC)");
+  const end = page.getByLabel("Конец периода создания (UTC)");
+  await expect(page.getByText(/Создан за период:/)).toHaveCount(0);
+  await start.fill("2026-10-01");
+  await end.fill("2026-10-31");
+  await expect(row("Начало периода")).toContainText(/Создан за период:.*01\.10\.2026.*00:00.*UTC/);
+  await expect(row("Конец периода")).toContainText(/Создан за период:.*31\.10\.2026.*23:59.*UTC/);
+  await expect(row("Старый изменённый проект")).not.toContainText("Создан за период:");
+  await expect(row("После периода")).not.toContainText("Создан за период:");
+  await expect(page.getByText(/Создан за период:/)).toHaveCount(2);
+  await page.reload();
+  await start.fill("2026-10-01");
+  await end.fill("2026-10-31");
+  await expect(page.getByText(/Создан за период:/)).toHaveCount(2);
+  await start.fill("2026-11-01");
+  await expect(page.getByRole("alert")).toHaveText("Начало периода не может быть позже конца.");
+  await expect(page.getByText(/Создан за период:/)).toHaveCount(0);
+});
