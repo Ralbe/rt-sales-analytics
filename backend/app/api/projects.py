@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core import cache
@@ -368,6 +369,14 @@ def _find_duplicate(db: Session, name: str, client_id: int, exclude_id: int | No
     return next((p for p in db.scalars(stmt).unique() if p.name.casefold() == key), None)
 
 
+def _check_integrity_conflict(db: Session, data: ProjectIn, project_id: int | None = None) -> None:
+    db.rollback()
+    if _find_duplicate(db, data.name, data.client_id, project_id) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, {"field": "name", "message": "У этого клиента уже есть проект с таким названием"}
+        ) from None
+
+
 def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
     if db.get(Client, data.client_id) is None:
         raise HTTPException(422, {"field": "client_id", "message": "Клиент не найден"})
@@ -439,6 +448,9 @@ def create_project(
         if data.financial_entries is not None:
             _replace_financial_entries(db, project, data.financial_entries, references, user)
         db.commit()
+    except IntegrityError:
+        _check_integrity_conflict(db, data)
+        raise
     except Exception:
         db.rollback()
         raise
@@ -472,6 +484,9 @@ def update_project(
             finances_changed = _replace_financial_entries(db, project, data.financial_entries, references, user)
             changed = changed or finances_changed
         db.commit()
+    except IntegrityError:
+        _check_integrity_conflict(db, data, project_id)
+        raise
     except Exception:
         db.rollback()
         raise

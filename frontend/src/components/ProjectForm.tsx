@@ -29,7 +29,7 @@ const money = (label: string, required: boolean) =>
     .refine((v) => !required || v.trim() !== "", `Введите ${label}`)
     .refine((v) => v.trim() === "" || isNumber(v), "Введите число, например 1 500 000")
     .refine((v) => v.trim() === "" || toNumber(v) >= 0, "Не может быть отрицательной")
-    .refine((v) => v.trim() === "" || toNumber(v) <= 1e12, "Слишком большая сумма")
+    .refine((v) => v.trim() === "" || toNumber(v) <= 999999999999.99, "Слишком большая сумма")
     .refine((v) => !required || v.trim() === "" || toNumber(v) > 0, "Сумма должна быть больше 0");
 
 const schema = z
