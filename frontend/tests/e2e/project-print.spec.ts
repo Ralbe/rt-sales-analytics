@@ -322,3 +322,35 @@ test("ошибка window.print освобождает снимок и оста�
   await expect(report(page)).toBeEmpty();
   await expect(button(page)).toBeEnabled();
 });
+
+for (const stageScheme of ["legacy", "customer"] as const) {
+  test("nullable stage в печати: «Не применяется» для схемы " + stageScheme + ", без соответствия 6↔10", async ({ page }) => {
+    const state = await openProject(page, { project: { ...PROJECT, stage_scheme: stageScheme, stage: null } });
+    await preparePrint(page);
+    await expect(field(page, "stage")).toHaveText("Не применяется");
+    await expect(field(page, "customer_stage")).toHaveText(PROJECT.customer_stage!.name);
+    await expect(field(page, "probability")).toHaveText(String(PROJECT.probability));
+    if (stageScheme === "customer") {
+      await expect(report(page).locator("[data-completion-state]")).toHaveText("Состояние завершения: не определено");
+    } else {
+      await expect(report(page).locator("[data-completion-state]")).toHaveCount(0);
+    }
+    expect(state.requests.every((request) => request.startsWith("GET "))).toBe(true);
+    expect(state.unexpected).toEqual([]);
+  });
+}
+
+test("customer с этапом «Успех» и вероятностью 100 сохраняет неопределённое завершение в карточке и PDF", async ({ page }) => {
+  const state = await openProject(page, { project: {
+    ...PROJECT, stage_scheme: "customer", stage: null, closed_at: null, probability: 100,
+    customer_stage: { ...REFS.customer_stages[0], name: "Успех" },
+  } });
+  await expect(page.locator("form [data-completion-state]")).toHaveText("Состояние завершения: не определено");
+  await preparePrint(page);
+  await expect(field(page, "customer_stage")).toHaveText("Успех");
+  await expect(field(page, "probability")).toHaveText("100");
+  await expect(field(page, "closed_at")).toHaveText("Не указано");
+  await expect(report(page).locator("[data-completion-state]")).toHaveText("Состояние завершения: не определено");
+  expect(state.project.closed_at).toBeNull();
+  expect(state.unexpected).toEqual([]);
+});

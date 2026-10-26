@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { EChartsOption } from "echarts";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { Chart } from "@/components/Chart";
 import { api } from "@/lib/api";
@@ -10,6 +11,7 @@ import { count, date, money, pct } from "@/lib/format";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldLabels } from "@/lib/project-field-labels";
 import type {
   BreakdownResponse,
+  AnalyticsScope,
   DashboardFilters,
   KpiResponse,
   ProjectPage,
@@ -18,6 +20,7 @@ import type {
 } from "@/lib/types";
 
 import { widgetQueryKey } from "./widget-data";
+import { AnalyticsScopeNote } from "./AnalyticsScopeNote";
 
 interface Props {
   widget: Widget;
@@ -32,6 +35,13 @@ export const filterQuery = (f: DashboardFilters) => ({
 
 const isMoney = (metric?: string) => metric !== "projects";
 const fmt = (metric?: string) => (v: number) => (isMoney(metric) ? money(v) : count(v));
+
+function AnalyticsFrame({ data, children, printable = false }: { data: AnalyticsScope; children: ReactNode; printable?: boolean }) {
+  return <div style={{ height: printable ? undefined : "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <AnalyticsScopeNote data={data} />
+    <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+  </div>;
+}
 
 function State({ loading, error }: { loading: boolean; error: unknown }) {
   if (loading) return <div className="muted">Загрузка…</div>;
@@ -54,7 +64,7 @@ export function KpiView({ widget, data }: { widget: Widget; data: KpiResponse })
   const show = item.unit === "rub" ? money : count;
   const dir = item.delta_pct === null || item.delta_pct === 0 ? "" : item.delta_pct > 0 ? "up" : "down";
   return (
-    <div className="kpi">
+    <AnalyticsFrame data={data}><div className="kpi">
       <div className="value">{show(item.value)}</div>
       <div className={`delta ${dir}`}>
         {dir === "up" ? "▲" : dir === "down" ? "▼" : ""} {pct(item.delta_pct)}{" "}
@@ -62,7 +72,7 @@ export function KpiView({ widget, data }: { widget: Widget; data: KpiResponse })
           к {date(data.previous_as_of)}: {show(item.previous)}
         </span>
       </div>
-    </div>
+    </div></AnalyticsFrame>
   );
 }
 
@@ -128,7 +138,7 @@ export function TrendView({ widget, data, printable = false }: { widget: Widget;
       },
     ],
   };
-  return <Chart option={option} printable={printable} />;
+  return <AnalyticsFrame data={data} printable={printable}><Chart option={option} printable={printable} /></AnalyticsFrame>;
 }
 
 export function BreakdownWidget({ widget, filters }: Props) {
@@ -146,12 +156,12 @@ export function BreakdownView({ widget, data, printable = false }: { widget: Wid
   const { metric = "funnel", chart = "bar" } = widget.config;
   const items = data.items;
   const f = fmt(metric);
-  if (!items.length) return <div className="muted">Нет данных для выбранных фильтров</div>;
+  if (!items.length) return <AnalyticsFrame data={data} printable={printable}><div className="muted">Нет данных для выбранных фильтров</div></AnalyticsFrame>;
 
   if (chart === "table") {
     const total = items.reduce((s, i) => s + i.value, 0);
     return (
-      <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
+      <AnalyticsFrame data={data} printable={printable}><div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
         <table className="table">
           {printable && <thead><tr><th>Группа</th><th className="num">Значение</th><th className="num">Доля</th></tr></thead>}
           <tbody>
@@ -164,7 +174,7 @@ export function BreakdownView({ widget, data, printable = false }: { widget: Wid
             ))}
           </tbody>
         </table>
-      </div>
+      </div></AnalyticsFrame>
     );
   }
 
@@ -200,7 +210,7 @@ export function BreakdownView({ widget, data, printable = false }: { widget: Wid
     };
   }
   return (
-    <>
+    <AnalyticsFrame data={data} printable={printable}>
       <Chart option={option} printable={printable} />
       {printable && (
         <>
@@ -211,7 +221,7 @@ export function BreakdownView({ widget, data, printable = false }: { widget: Wid
           </table>
         </>
       )}
-    </>
+    </AnalyticsFrame>
   );
 }
 
@@ -237,6 +247,7 @@ export function ProjectsView({ data, labels, printable = false }: {
   const router = useRouter();
   return (
     <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
+      <AnalyticsScopeNote data={data} />
       <table className="table">
         <thead>
           <tr>

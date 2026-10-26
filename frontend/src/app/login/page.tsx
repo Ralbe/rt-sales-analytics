@@ -93,7 +93,7 @@ function CodeStep({ mfa, onRestart }: { mfa: LoginResponse; onRestart: () => voi
     try {
       const user = await post<User>("/auth/2fa", { mfa_token: mfa.mfa_token, code });
       queryClient.setQueryData(["me"], user);
-      router.replace("/dashboards");
+      router.replace("/projects");
     } catch (e) {
       if (e instanceof ApiError && e.fields.code) setFieldError("code", { message: e.fields.code });
       else if (e instanceof ApiError && e.status === 401) onRestart();

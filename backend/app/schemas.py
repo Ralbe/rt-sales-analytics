@@ -7,6 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.security import inn_is_valid
 from app.models import Role, Stage
 
+LEGACY_STAGE_SCOPE_NOTE = (
+    "Показатели рассчитаны только по проектам с прежними шестью стадиями. "
+    "Проекты с новыми этапами не включены."
+)
+
 
 class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -131,10 +136,10 @@ class ProjectIn(BaseModel):
     client_id: int
     manager_id: int | None = None
     service_id: int
-    stage: Stage
+    stage: Stage | None = None
     amount: Decimal = Field(ge=0, le=Decimal("999999999999.99"), decimal_places=2)
     cost: Decimal = Field(default=Decimal("0"), ge=0, le=Decimal("999999999999.99"), decimal_places=2)
-    probability: int = Field(ge=0, le=100)
+    probability: int | None = Field(default=None, ge=0, le=100)
     start_date: date
     expected_close_date: date
     payment_type_id: int | None = None
@@ -181,7 +186,8 @@ class ProjectOut(ORM):
     segment: RefItem
     manager: ManagerItem
     service: ServiceItem
-    stage: Stage
+    stage_scheme: Literal["legacy", "customer"] = Field(json_schema_extra={"readOnly": True})
+    stage: Stage | None
     amount: Decimal
     cost: Decimal
     margin: Decimal
@@ -239,6 +245,8 @@ class ProjectPage(BaseModel):
     total: int
     page: int
     size: int
+    stage_scope: Literal["legacy", "all"] = "all"
+    scope_note: str | None = None
 
 
 class NameCheckOut(BaseModel):
@@ -261,7 +269,12 @@ class KpiItem(BaseModel):
     delta_pct: float | None
 
 
-class KpiOut(BaseModel):
+class AnalyticsScope(BaseModel):
+    stage_scope: Literal["legacy"] = "legacy"
+    scope_note: str = LEGACY_STAGE_SCOPE_NOTE
+
+
+class KpiOut(AnalyticsScope):
     as_of: date
     previous_as_of: date
     items: list[KpiItem]
@@ -277,7 +290,7 @@ class ForecastPoint(TrendPoint):
     upper: float
 
 
-class TrendOut(BaseModel):
+class TrendOut(AnalyticsScope):
     metric: TrendMetric
     history: list[TrendPoint]
     forecast: list[ForecastPoint]
@@ -290,7 +303,7 @@ class BreakdownItem(BaseModel):
     value: float
 
 
-class BreakdownOut(BaseModel):
+class BreakdownOut(AnalyticsScope):
     metric: KpiKey
     group_by: GroupBy
     items: list[BreakdownItem]

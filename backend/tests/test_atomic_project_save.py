@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 from conftest import login
+from project_factories import create_legacy_project, legacy_payload
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from test_project_history import _finance
@@ -127,13 +128,26 @@ def test_invalid_finances_do_not_mutate_card_rows_or_audit(as_user, db, monkeypa
     bump.assert_not_called()
 
 
-@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize(
+    ("operation", "scheme"), [("create", "customer"), ("update", "customer"), ("update", "legacy")],
+)
 @pytest.mark.parametrize("failure", ["audit", "commit", "database"])
-def test_failure_after_flush_rolls_back_everything(as_user, db, monkeypatch, operation, failure):
-    saved = _create(as_user, db, financial_entries=[_finance(db, amount="1.234")]) if operation == "update" else None
+def test_failure_after_flush_rolls_back_everything(as_user, db, monkeypatch, operation, scheme, failure):
+    if scheme == "legacy":
+        legacy = create_legacy_project(db)
+        response = as_user.put(f"/api/projects/{legacy.id}/financial-entries", json=[_finance(db, amount="1.234")])
+        assert response.status_code == 200
+        saved = as_user.get(f"/api/projects/{legacy.id}").json()
+    else:
+        saved = (
+            _create(as_user, db, financial_entries=[_finance(db, amount="1.234")]) if operation == "update" else None
+        )
     before = _counts(db)
     rows = [_finance(db, "cost", amount="5.678")]
-    payload = _payload(db, name="Откат атомарного сохранения", stage="won", financial_entries=rows)
+    payload = (
+        legacy_payload(db, name="Откат атомарного сохранения", stage="won", financial_entries=rows)
+        if scheme == "legacy" else _payload(db, name="Откат атомарного сохранения", financial_entries=rows)
+    )
     bump = Mock()
     monkeypatch.setattr(projects.cache, "bump", bump)
     record = projects.audit.record
@@ -334,7 +348,9 @@ def test_financial_schema_errors_leave_no_partial_save(as_user, db, operation, i
 
 def test_card_validation_does_not_replace_valid_finances(as_user, db):
     saved = _create(as_user, db, financial_entries=[_finance(db, amount="1.234")])
-    stage = db.scalar(select(ReferenceValue).where(ReferenceValue.category == "customer_stage"))
+    stage = db.scalar(select(ReferenceValue).where(
+        ReferenceValue.category == "customer_stage", ReferenceValue.id != saved["customer_stage"]["id"],
+    ))
     stage.probability = None
     db.commit()
     before = _counts(db)

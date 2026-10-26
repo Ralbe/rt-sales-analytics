@@ -201,6 +201,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
                 client_id=client.id,
                 manager_id=rng.choice(managers).id,
                 service_id=all_services[service_name].id,
+                stage_scheme="legacy",
                 stage=stage,
                 amount=amount,
                 cost=cost,

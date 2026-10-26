@@ -30,6 +30,7 @@ from app.models import (
 )
 from app.project_write_schemas import ProjectSaveIn
 from app.schemas import (
+    LEGACY_STAGE_SCOPE_NOTE,
     NameCheckOut,
     ProjectFinancialEntryIn,
     ProjectFinancialEntryOut,
@@ -84,6 +85,7 @@ def to_out(p: Project) -> dict:
         "manager": p.manager,
         "service": p.service,
         "stage": p.stage,
+        "stage_scheme": p.stage_scheme,
         "amount": p.amount,
         "cost": p.cost,
         "margin": margin,
@@ -148,7 +150,7 @@ def _filtered_query(
     if implementation_year is not None:
         stmt = stmt.where(Project.implementation_year == implementation_year)
     if open_only:
-        stmt = stmt.where(Project.stage.notin_(CLOSED_STAGES))
+        stmt = stmt.where(Project.stage_scheme == "legacy", Project.stage.notin_(CLOSED_STAGES))
     return stmt
 
 
@@ -196,7 +198,11 @@ def list_projects(
     stmt = params.query(user)
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
     items = db.scalars(stmt.offset((page - 1) * size).limit(size)).unique().all()
-    return {"items": [to_out(p) for p in items], "total": total, "page": page, "size": size}
+    return {
+        "items": [to_out(p) for p in items], "total": total, "page": page, "size": size,
+        "stage_scope": "legacy" if params.open_only else "all",
+        "scope_note": LEGACY_STAGE_SCOPE_NOTE if params.open_only else None,
+    }
 
 
 @router.get("/check-name", response_model=NameCheckOut)
@@ -220,7 +226,10 @@ def export_projects(
     projects = db.scalars(params.query(user).limit(EXPORT_LIMIT)).unique().all()
     wb = Workbook()
     ws = wb.active
-    ws.title = "Проекты"
+    ws.title = "Проекты (6 стадий)" if params.open_only else "Проекты"
+    if params.open_only:
+        wb.create_sheet("Область данных").append([LEGACY_STAGE_SCOPE_NOTE])
+        wb.properties.description = LEGACY_STAGE_SCOPE_NOTE
     write_project_export_headers(ws, effective_project_field_labels(db))
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -234,7 +243,7 @@ def export_projects(
                 p.client.segment.name,
                 p.service.name,
                 p.manager.full_name,
-                STAGE_LABELS[p.stage],
+                STAGE_LABELS[p.stage] if p.stage is not None else "Не применяется",
                 float(p.amount),
                 float(p.cost),
                 float(p.amount - p.cost),
@@ -304,9 +313,10 @@ def _set_archived(db: Session, project_id: int, user: User, *, archived: bool) -
     project.updated_at = func.now()
     audit.record(
         db, user.id, "archive" if archived else "restore", "project", project.id,
-        before=with_snapshot_field_labels({"archived_at": before}, field_labels),
+        before=with_snapshot_field_labels({"archived_at": before, "_stage_scheme": project.stage_scheme}, field_labels),
         after=with_snapshot_field_labels(
-            {"archived_at": project.archived_at.isoformat() if project.archived_at else None}, field_labels,
+            {"archived_at": project.archived_at.isoformat() if project.archived_at else None,
+             "_stage_scheme": project.stage_scheme}, field_labels,
         ),
         author_name=user.full_name,
     )
@@ -378,6 +388,24 @@ def _check_integrity_conflict(db: Session, data: ProjectIn, project_id: int | No
 
 
 def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
+    customer = project.stage_scheme == "customer"
+    stage_changed = customer and (project.id is None or data.customer_stage_id != project.customer_stage_id)
+    if customer:
+        if data.stage is not None:
+            raise HTTPException(422, {
+                "field": "stage", "message": "Для новых проектов выберите этап по ТЗ; прежняя стадия не применяется",
+            })
+        if data.customer_stage_id is None:
+            raise HTTPException(422, {"field": "customer_stage_id", "message": "Выберите этап по ТЗ"})
+    else:
+        if "customer_stage_id" in data.model_fields_set and data.customer_stage_id != project.customer_stage_id:
+            raise HTTPException(422, {
+                "field": "customer_stage_id", "message": "Вспомогательный этап прежнего проекта изменять нельзя",
+            })
+        if "stage" in data.model_fields_set and data.stage is None:
+            raise HTTPException(422, {"field": "stage", "message": "Укажите прежнюю стадию проекта"})
+        if "probability" in data.model_fields_set and data.probability is None:
+            raise HTTPException(422, {"field": "probability", "message": "Укажите вероятность проекта"})
     if db.get(Client, data.client_id) is None:
         raise HTTPException(422, {"field": "client_id", "message": "Клиент не найден"})
     if db.get(Service, data.service_id) is None:
@@ -391,11 +419,14 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
     }
     references: dict[str, ReferenceValue] = {}
     for field, category in expected_categories.items():
+        if field == "customer_stage_id" and not customer:
+            continue
         reference_id = getattr(data, field)
         if reference_id is None:
             continue
         reference = db.get(ReferenceValue, reference_id)
-        if reference is None or not reference.is_active or reference.category != category:
+        retained_stage = field == "customer_stage_id" and not stage_changed
+        if reference is None or (not reference.is_active and not retained_stage) or reference.category != category:
             raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
         references[field] = reference
 
@@ -413,16 +444,27 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
         )
 
     customer_stage = references.get("customer_stage_id")
-    if customer_stage is not None and customer_stage.probability is None:
+    if stage_changed and customer_stage is not None and customer_stage.probability is None:
         raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
 
     was_closed = project.stage in CLOSED_STAGES if project.stage else False
-    for field, value in data.model_dump(exclude={"manager_id", "financial_entries"}).items():
+    for field, value in data.model_dump(
+        exclude={"manager_id", "financial_entries", "stage", "customer_stage_id", "probability"},
+    ).items():
         setattr(project, field, value)
-    if customer_stage is not None:
-        project.probability = customer_stage.probability
     project.manager_id = manager_id
-    if data.stage in CLOSED_STAGES:
+    if customer:
+        project.stage = None
+        project.customer_stage_id = data.customer_stage_id
+        if stage_changed:
+            project.probability = customer_stage.probability
+        project.closed_at = None
+        return
+    if data.stage is not None:
+        project.stage = data.stage
+    if data.probability is not None:
+        project.probability = data.probability
+    if project.stage in CLOSED_STAGES:
         if not was_closed or project.closed_at is None:
             project.closed_at = max(date.today(), data.start_date)
     else:
@@ -435,7 +477,7 @@ def create_project(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
-    project = Project(cost=Decimal("0"))
+    project = Project(cost=Decimal("0"), stage_scheme="customer")
     try:
         references = _validate_financial_entries(db, data.financial_entries or [])
         _apply(db, project, data, user)

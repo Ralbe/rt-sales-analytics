@@ -47,12 +47,15 @@ test("мастер-ТЗ: реальные подписи и история, ат
   const name = `Приёмка мастер-ТЗ ${suffix}`;
   const createdResponse = await page.request.post("/api/projects", { data: {
     name, client_id: clients[0].id, service_id: refs.services[0].id, manager_id: member.id,
-    stage: "proposal", probability: 50, amount: "1234.56", cost: "0.01",
+    customer_stage_id: refs.customer_stages[0].id, amount: "1234.56", cost: "0.01",
     start_date: "2026-10-01", expected_close_date: "2026-12-31", implementation_year: 2026,
     project_status: "Я".repeat(1000), realized_work: "Сделано", period_plan: "Планы", financial_entries: rows,
   } });
   expect(createdResponse.status()).toBe(201);
   const project = await createdResponse.json() as Project;
+  expect(project.stage_scheme).toBe("customer");
+  expect(project.stage).toBeNull();
+  expect(project.probability).toBe(refs.customer_stages[0].probability);
   expect(project.financial_entries.map((row) => row.amount)).toEqual(["123.456", "0.001"]);
   expect(project.financial_entries.map((row) => row.vat_included)).toEqual([true, false]);
   const firstLabel = `Коммерческая инициатива ${suffix.slice(0, 8)}`;

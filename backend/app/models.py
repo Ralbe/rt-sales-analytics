@@ -128,7 +128,14 @@ class Client(Base):
 
 class Project(Base):
     __tablename__ = "projects"
-    __table_args__ = (UniqueConstraint("client_id", "name", name="uq_project_client_name"),)
+    __table_args__ = (
+        UniqueConstraint("client_id", "name", name="uq_project_client_name"),
+        CheckConstraint(
+            "(stage_scheme = 'legacy' AND stage IS NOT NULL) OR "
+            "(stage_scheme = 'customer' AND stage IS NULL AND customer_stage_id IS NOT NULL)",
+            name="ck_project_stage_scheme",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(300))
@@ -136,7 +143,8 @@ class Project(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
     manager_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
-    stage: Mapped[Stage] = mapped_column(_enum(Stage, "project_stage"), index=True)
+    stage_scheme: Mapped[str] = mapped_column(String(10), default="customer", server_default="customer")
+    stage: Mapped[Stage | None] = mapped_column(_enum(Stage, "project_stage"), index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
     probability: Mapped[int] = mapped_column(Integer)

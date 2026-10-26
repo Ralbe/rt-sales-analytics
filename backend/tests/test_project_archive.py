@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import login
 from openpyxl import load_workbook
+from project_factories import create_legacy_project
 from sqlalchemy import create_engine, func, select, text
 from test_projects import _payload
 
@@ -98,7 +99,8 @@ def test_admin_must_restore_before_editing_card_or_finances(client, db):
 
 def test_archive_is_excluded_from_active_register_xlsx_and_analytics(client, db):
     _admin(client, db)
-    project = _create(client, db)
+    legacy = create_legacy_project(db)
+    project = client.get(f"/api/projects/{legacy.id}").json()
     pid = project["id"]
     client.post(f"/api/projects/{pid}/archive")
     query = {"q": project["name"]}

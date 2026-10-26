@@ -98,6 +98,11 @@ class HistoryFormatter:
         if field not in snapshot:
             return None
         value = snapshot[field]
+        if value is None and snapshot.get("_stage_scheme") == "customer":
+            if field == "stage":
+                return "Не применяется"
+            if field == "closed_at":
+                return "Не определено"
         if value is None or value == "":
             return "Не задано"
         if field in REFERENCE_MODELS:
@@ -236,6 +241,7 @@ def project_snapshot(db: Session, project: Project, *, field_labels: dict[str, s
     )
     for field in ("amount", "cost"):
         snapshot[field] = decimal_text(snapshot[field], 2)
+    snapshot["_stage_scheme"] = project.stage_scheme
     formatter = HistoryFormatter(db, [snapshot])
     snapshot["_labels"] = {
         field: formatter.reference(field, snapshot)

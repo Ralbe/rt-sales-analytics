@@ -31,12 +31,12 @@ def get_filters(
 
 
 def cached(name: str, f: Filters, compute: Callable[[], Any], **params: Any) -> Any:
-    key = cache.make_key("analytics", fn=name, filters=f, **params)
+    key = analytics.cache_key(name, f, **params)
     result = cache.get_json(key)
     if result is None:
         result = compute()
         cache.set_json(key, result)
-    return result
+    return {**result, **analytics.STAGE_SCOPE}
 
 
 @router.get("/kpi", response_model=KpiOut)

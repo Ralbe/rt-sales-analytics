@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-import type { Dashboard, Refs, User, Widget } from "../../src/lib/types";
+import type { AnalyticsScope, Dashboard, Refs, User, Widget } from "../../src/lib/types";
 
 const user: User = { id: 7, email: "pdf@example.test", full_name: "Мария Продажина", role: "analyst" };
 const refs: Refs = {
@@ -40,6 +40,7 @@ async function openDashboard(page: Page, options: {
   trendError?: boolean;
   refsError?: boolean;
   refs?: () => Refs;
+  scope?: () => AnalyticsScope;
 } = {}) {
   const requests: { path: string; method: string }[] = [];
   const current = { ...dashboard, widgets: options.widgets ?? widgets, editable: options.editable ?? true };
@@ -64,18 +65,21 @@ async function openDashboard(page: Page, options: {
       case "/api/dashboards": await route.fulfill({ json: [current] }); break;
       case "/api/dashboards/41": await route.fulfill({ json: current }); break;
       case "/api/analytics/kpi": await route.fulfill({ json: {
+        ...options.scope?.(),
         as_of: "2026-10-24", previous_as_of: "2025-10-24",
         items: [{ key: "funnel", title: "Объём воронки", unit: "rub", value: 1250000, previous: 1000000, delta_pct: 25 }],
       } }); break;
       case "/api/analytics/trend":
         await options.trendGate;
         await route.fulfill(options.trendError ? { status: 500, json: { detail: "Ошибка аналитики" } } : { json: {
+          ...options.scope?.(),
           metric: "funnel", method: "linear",
           history: [{ date: "2026-08-29", value: 1100000 }, { date: "2026-10-24", value: 1250000 }],
           forecast: [{ date: "2026-10-25", value: 1260000, lower: 1200000, upper: 1320000 }, { date: "2026-11-14", value: 1400000, lower: 1300000, upper: 1500000 }],
         } }); break;
-      case "/api/analytics/breakdown": await route.fulfill({ json: breakdown }); break;
+      case "/api/analytics/breakdown": await route.fulfill({ json: { ...breakdown, ...options.scope?.() } }); break;
       case "/api/projects": await route.fulfill({ json: {
+        ...options.scope?.(),
         page: 1, size: 20, total: 20,
         items: Array.from({ length: 20 }, (_, index) => ({
           id: index + 1, name: `Проект № ${index + 1} — модернизация региональной инфраструктуры связи`,
@@ -349,4 +353,42 @@ test("первое монтирование печатного SVG и повто
   await page.getByRole("button", { name: "PDF / Печать" }).click();
   await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(2);
   await expect(report.locator("[data-print-chart]")).toHaveAttribute("data-print-chart", "ready");
+});
+
+test("серверный scope_note для трёх аналитик и top-проектов виден на экране и заморожен в PDF", async ({ page }, testInfo) => {
+  const original = "Показатели рассчитаны только по проектам с прежними шестью стадиями. Проекты с новыми этапами не включены.";
+  let scopeNote = original;
+  await page.clock.install();
+  const requests = await openDashboard(page, {
+    widgets: [widgets[0], widgets[1], widgets[3], widgets[4]],
+    scope: () => ({ stage_scope: "legacy", scope_note: scopeNote }),
+  });
+  const liveNotes = page.locator(".widget [data-stage-scope]");
+  await expect(liveNotes).toHaveCount(4);
+  for (const note of await liveNotes.all()) await expect(note).toHaveText(original);
+  const beforePrint = requests.length;
+  const report = await preparePrint(page);
+  const snapshotNotes = report.locator("[data-stage-scope]");
+  await expect(snapshotNotes).toHaveCount(4);
+  for (const note of await snapshotNotes.all()) await expect(note).toHaveText(original);
+  await page.emulateMedia({ media: "print" });
+  const pdfPath = testInfo.outputPath("dashboard-legacy-scope.pdf");
+  const pdf = await page.pdf({ path: pdfPath, preferCSSPageSize: true, printBackground: true });
+  expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  await testInfo.attach("Серверная область аналитики в PDF", { path: pdfPath, contentType: "application/pdf" });
+  await page.emulateMedia({ media: "screen" });
+  expect(requests.length).toBe(beforePrint);
+  expect(requests.some((request) => request.path.startsWith("/api/projects?") && new URL(request.path, "http://localhost").searchParams.get("open_only") === "true")).toBe(true);
+  scopeNote = original + " Сервер обновил пояснение.";
+  await page.clock.fastForward(6 * 60_000);
+  await page.evaluate(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
+  for (const note of await liveNotes.all()) await expect(note).toHaveText(scopeNote);
+  for (const note of await snapshotNotes.all()) await expect(note).toHaveText(original);
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  await expect(report).toHaveAttribute("data-ready", "false");
+  await expect(report.locator("[data-stage-scope]")).toHaveCount(0);
+  await page.getByRole("button", { name: "PDF / Печать", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(2);
+  await expect(report.locator("[data-stage-scope]")).toHaveCount(4);
+  for (const note of await report.locator("[data-stage-scope]").all()) await expect(note).toHaveText(scopeNote);
 });

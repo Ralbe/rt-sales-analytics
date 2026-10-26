@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import type { Project, Refs } from "../../src/lib/types";
+import type { Project, ProjectPage, Refs } from "../../src/lib/types";
 
 const manager = { id: 1, full_name: "Тестовый менеджер" };
 const refs: Refs = {
@@ -44,7 +44,16 @@ async function mockApi(page: Page, items = [project()], total = items.length) {
     if (url.pathname === "/api/dashboards") return route.fulfill({ json: [] });
     if (url.pathname === "/api/projects") {
       requests.push(url.searchParams);
-      return route.fulfill({ json: { items, total, page: Number(url.searchParams.get("page")), size: 20 } });
+      const openOnly = url.searchParams.get("open_only") === "true";
+      const filtered = openOnly
+        ? items.filter((item) => item.stage_scheme !== "customer" && item.stage !== null && !["won", "lost"].includes(item.stage))
+        : items;
+      const result: ProjectPage = {
+        items: filtered, total: filtered === items ? total : filtered.length, page: Number(url.searchParams.get("page")), size: 20,
+        stage_scope: openOnly ? "legacy" : "all",
+        scope_note: openOnly ? "Показатели рассчитаны только по проектам с прежними шестью стадиями. Проекты с новыми этапами не включены." : null,
+      };
+      return route.fulfill({ json: result });
     }
     return route.fulfill({ status: 404, json: { detail: "Тестовый маршрут не найден" } });
   });
@@ -168,4 +177,47 @@ test("реестр: пустой ответ сохраняет полный за
   const empty = page.getByRole("cell", { name: "Ничего не найдено", exact: true });
   await expect(empty).toBeVisible();
   await expect(empty).toHaveAttribute("colspan", String(await page.getByRole("columnheader").count()));
+});
+
+test("реестр показывает оба поколения; nullable legacy-поле имеет подпись «Не применяется», open_only ограничен legacy", async ({ page }) => {
+  const mixed = [
+    project({ id: 41, name: "Прежний открытый проект", stage_scheme: "legacy" }),
+    project({ id: 42, name: "Новый проект", stage_scheme: "customer", stage: null, probability: 80 }),
+    project({ id: 43, name: "Прежний выигранный проект", stage_scheme: "legacy", stage: "won" }),
+  ];
+  const requests = await mockApi(page, mixed);
+  await page.goto("/projects");
+  await expect(page.locator("tbody tr")).toHaveCount(3);
+  await expect(await cell(page, "stage", 1)).toHaveText("Не применяется");
+  await expect(await cell(page, "customer_stage_id", 1)).toHaveText(refs.customer_stages[0].name);
+  await expect(await cell(page, "probability", 0)).toHaveText("37%");
+  expect(requests.at(-1)?.has("open_only")).toBe(false);
+  const openOnly = page.getByLabel("Только открытые проекты прежних стадий", { exact: true });
+  await expect(openOnly).toHaveAccessibleDescription("Фильтр открытых проектов применяется только к прежним шести стадиям. Проекты с новыми этапами не включаются.");
+  await openOnly.check();
+  await expect.poll(() => requests.at(-1)?.get("open_only")).toBe("true");
+  await expect(page.locator("tbody tr")).toHaveCount(1);
+  await expect(page.locator("tbody")).toContainText("Прежний открытый проект");
+  const exportUrl = new URL((await page.getByRole("link", { name: "Выгрузить в Excel" }).getAttribute("href"))!, "http://localhost");
+  expect(exportUrl.searchParams.get("open_only")).toBe("true");
+  await openOnly.uncheck();
+  await expect(openOnly).not.toBeChecked();
+  await expect(page.locator("tbody tr")).toHaveCount(3);
+  const allExportUrl = new URL((await page.getByRole("link", { name: "Выгрузить в Excel" }).getAttribute("href"))!, "http://localhost");
+  expect(allExportUrl.searchParams.has("open_only")).toBe(false);
+});
+
+test("F4: корневой маршрут открывает полный реестр всех поколений, без ограничения top-8", async ({ page }) => {
+  const items = Array.from({ length: 12 }, (_, index) => project({
+    id: index + 1, name: "Стартовый проект " + (index + 1),
+    ...(index % 2 ? { stage_scheme: "customer", stage: null } : { stage_scheme: "legacy" }),
+  }));
+  const requests = await mockApi(page, items);
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page.getByRole("heading", { name: "Проекты", exact: true })).toBeVisible();
+  await expect(page.locator("tbody tr")).toHaveCount(12);
+  expect(requests.at(-1)?.get("size")).toBe("20");
+  expect(requests.at(-1)?.has("open_only")).toBe(false);
+  expect(requests.at(-1)?.has("stage")).toBe(false);
 });

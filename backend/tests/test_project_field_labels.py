@@ -295,7 +295,10 @@ def test_labels_migration_upgrade_check_and_downgrade(card_migration):  # noqa: 
     config, engine, original = card_migration
     command.upgrade(config, "0007")
     command.upgrade(config, "0008")
+    # Автогенерация проверяет текущую ORM на head, затем возвращаемся к проверяемой миграции.
+    command.upgrade(config, "head")
     command.check(config)
+    command.downgrade(config, "0008")
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO project_field_labels (key,label) VALUES ('name','Метка')"))
         assert connection.scalar(text("SELECT label FROM project_field_labels WHERE key='name'")) == "Метка"
@@ -311,4 +314,5 @@ def test_labels_migration_upgrade_check_and_downgrade(card_migration):  # noqa: 
     command.downgrade(config, "0007")
     assert "project_field_labels" not in inspect(engine).get_table_names()
     command.upgrade(config, "0008")
+    command.upgrade(config, "head")
     command.check(config)

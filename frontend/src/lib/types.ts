@@ -55,7 +55,8 @@ export interface Project {
   segment: RefItem;
   manager: ManagerItem;
   service: ServiceItem;
-  stage: Stage;
+  stage: Stage | null;
+  readonly stage_scheme?: "legacy" | "customer";
   amount: string;
   cost: string;
   margin: string;
@@ -105,6 +106,8 @@ export interface ProjectPage {
   total: number;
   page: number;
   size: number;
+  stage_scope?: "all" | "legacy";
+  scope_note?: string | null;
 }
 
 export type KpiKey = "funnel" | "projects" | "won_ytd";
@@ -119,20 +122,25 @@ export interface KpiItem {
   delta_pct: number | null;
 }
 
-export interface KpiResponse {
+export interface AnalyticsScope {
+  stage_scope?: "legacy";
+  scope_note?: string;
+}
+
+export interface KpiResponse extends AnalyticsScope {
   as_of: string;
   previous_as_of: string;
   items: KpiItem[];
 }
 
-export interface TrendResponse {
+export interface TrendResponse extends AnalyticsScope {
   metric: "funnel" | "projects";
   history: { date: string; value: number }[];
   forecast: { date: string; value: number; lower: number; upper: number }[];
   method: string;
 }
 
-export interface BreakdownResponse {
+export interface BreakdownResponse extends AnalyticsScope {
   metric: KpiKey;
   group_by: GroupBy;
   items: { key: string; label: string; value: number }[];

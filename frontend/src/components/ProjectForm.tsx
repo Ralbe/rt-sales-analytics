@@ -14,7 +14,7 @@ import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
 import { useProjectFieldLabels } from "@/lib/project-field-labels";
 import { projectHistoryKey } from "@/lib/history-types";
-import type { FinancialEntry, Project, Stage } from "@/lib/types";
+import type { FinancialEntry, Project } from "@/lib/types";
 
 const DRAFT_KEY = "project-draft";
 const STAGES = ["lead", "qualification", "proposal", "negotiation", "won", "lost"] as const;
@@ -41,7 +41,7 @@ const schema = z
       .refine((v) => v !== null, "Выберите клиента из списка или создайте нового"),
     service_id: z.string().min(1, "Выберите услугу"),
     manager_id: z.string().min(1, "Выберите ответственного"),
-    stage: z.enum(STAGES, { error: "Выберите стадию" }),
+    stage: z.union([z.enum(STAGES), z.literal("")]),
     customer_stage_id: z.string(),
     payment_type_id: z.string(),
     indicator_id: z.string(),
@@ -63,7 +63,7 @@ const schema = z
     period_plan: projectText,
     probability: z
       .string()
-      .refine((v) => /^\d{1,3}$/.test(v.trim()) && Number(v) <= 100, "Целое число от 0 до 100"),
+      .refine((v) => v === "" || (/^\d{1,3}$/.test(v.trim()) && Number(v) <= 100), "Целое число от 0 до 100"),
     amount: money("сумму контракта", true),
     cost: money("себестоимость", false),
     start_date: z.string().min(1, "Укажите дату начала"),
@@ -77,6 +77,17 @@ const schema = z
 
 type FormValues = z.input<typeof schema>;
 
+function projectSchema(customerScheme: boolean) {
+  return schema
+    .refine((v) => customerScheme ? v.customer_stage_id !== "" : v.stage !== "", {
+      path: [customerScheme ? "customer_stage_id" : "stage"],
+      message: customerScheme ? "Выберите этап проекта" : "Выберите стадию",
+    })
+    .refine((v) => customerScheme || v.probability !== "", {
+      path: ["probability"], message: "Целое число от 0 до 100",
+    });
+}
+
 // Ошибки сервера приходят по именам полей API — сопоставляем с полями формы
 const SERVER_FIELD: Record<string, keyof FormValues> = { client_id: "client" };
 
@@ -86,7 +97,7 @@ function fromProject(p?: Project, defaultManager?: number): FormValues {
     client: p ? { id: p.client.id, name: p.client.name, segment: p.segment.name } : null,
     service_id: p ? String(p.service.id) : "",
     manager_id: p ? String(p.manager.id) : defaultManager ? String(defaultManager) : "",
-    stage: p?.stage ?? "lead",
+    stage: p?.stage ?? "",
     customer_stage_id: p?.customer_stage ? String(p.customer_stage.id) : "",
     payment_type_id: p?.payment_type ? String(p.payment_type.id) : "",
     indicator_id: p?.indicator ? String(p.indicator.id) : "",
@@ -101,7 +112,7 @@ function fromProject(p?: Project, defaultManager?: number): FormValues {
     project_status: p?.project_status ?? "",
     realized_work: p?.realized_work ?? "",
     period_plan: p?.period_plan ?? "",
-    probability: String(p?.probability ?? 10),
+    probability: p ? String(p.probability) : "",
     amount: p ? String(Number(p.amount)) : "",
     cost: p ? String(Number(p.cost)) : "",
     start_date: p?.start_date ?? today(),
@@ -161,12 +172,14 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const { data: refs } = useRefs();
   const { label, heading } = useProjectFieldLabels();
   const isNew = !project;
+  const customerScheme = isNew || project.stage_scheme === "customer";
   const isUser = me?.role === "user";
   const readOnly = forcedReadOnly || !canEditProjects(me?.role);
 
   const [formError, setFormError] = useState<string | null>(null);
   const [nameTaken, setNameTaken] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
+  const draftLoadedRef = useRef(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
   const persistedIdRef = useRef(project?.id);
@@ -178,11 +191,11 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
   const { register, control, handleSubmit, reset, setValue, setError, trigger, getValues, watch, formState } =
     useForm<FormValues>({
-      resolver: zodResolver(schema),
+      resolver: zodResolver(projectSchema(customerScheme)),
       mode: "onTouched", // ошибка появляется, как только пользователь ушёл с поля
       defaultValues: fromProject(project, me?.id),
     });
-  const { errors, isSubmitting, isDirty, dirtyFields, touchedFields } = formState;
+  const { errors, isSubmitting, isDirty, touchedFields } = formState;
   const hasUnsavedChanges = isDirty || financialDirty;
 
   // Фоновое обновление не должно затирать несохранённый ввод.
@@ -195,13 +208,16 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
   // Восстановление черновика новой карточки
   useEffect(() => {
-    if (!isNew) return;
+    if (!isNew || draftLoadedRef.current) return;
+    draftLoadedRef.current = true;
     const draft = loadDraft();
     if (draft) {
-      reset(draft, { keepDefaultValues: true });
+      // Старый черновик не переносит шестистадийную схему в новый проект.
+      const stage = refs?.customer_stages.find((item) => String(item.id) === draft.customer_stage_id);
+      reset({ ...draft, stage: "", probability: stage ? String(stage.probability) : "" }, { keepDefaultValues: true });
       setDraftRestored(true);
     }
-  }, [isNew, reset]);
+  }, [isNew, reset, refs?.customer_stages]);
 
   const values = watch();
   const submittedRef = useRef(false);
@@ -235,16 +251,11 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
     if (values.client?.id) checkName();
   }, [values.client?.id, checkName]);
 
-  const onStageChange = (stage: Stage) => {
-    // Вероятность подставляется автоматически, пока пользователь не ввёл её сам
-    if (getValues("customer_stage_id")) return;
-    const def = refs?.stages.find((s) => s.id === stage)?.probability;
-    if (def !== undefined && !dirtyFields.probability) setValue("probability", String(def), { shouldValidate: true });
-  };
-
   const onCustomerStageChange = (stageId: string) => {
     const stage = refs?.customer_stages.find((item) => String(item.id) === stageId);
-    if (stage) setValue("probability", String(stage.probability), { shouldValidate: true });
+    const retainedStage = project?.stage_scheme === "customer" && stageId === String(project.customer_stage?.id);
+    const probability = retainedStage ? String(project.probability) : stage ? String(stage.probability) : "";
+    setValue("probability", probability, { shouldValidate: true });
   };
 
   const submit = handleSubmit(async (v) => {
@@ -263,14 +274,14 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       client_id: v.client!.id,
       service_id: Number(v.service_id),
       manager_id: Number(v.manager_id),
-      stage: v.stage,
-      probability: Number(v.probability),
+      ...(customerScheme
+        ? { customer_stage_id: Number(v.customer_stage_id) }
+        : { stage: v.stage, probability: Number(v.probability) }),
       amount: toNumber(v.amount).toFixed(2),
       cost: (v.cost.trim() ? toNumber(v.cost) : 0).toFixed(2),
       start_date: v.start_date,
       expected_close_date: v.expected_close_date,
       payment_type_id: v.payment_type_id ? Number(v.payment_type_id) : null,
-      customer_stage_id: v.customer_stage_id ? Number(v.customer_stage_id) : null,
       indicator_id: v.indicator_id ? Number(v.indicator_id) : null,
       accepted_for_forecast: v.accepted_for_forecast,
       assessment_status_id: v.accepted_for_forecast && v.assessment_status_id ? Number(v.assessment_status_id) : null,
@@ -468,18 +479,20 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
             <div className="row2">
               <div className={cls("customer_stage_id")}>
-                <label htmlFor="customer_stage_id">{label("customer_stage_id")}</label>
-                <select
+                <label htmlFor="customer_stage_id">{label("customer_stage_id")} {customerScheme && req}</label>
+                {customerScheme ? <select
                   id="customer_stage_id"
                   className="select"
                   {...register("customer_stage_id", { onChange: (e) => onCustomerStageChange(e.target.value) })}
                 >
-                  <option value="">— не указан —</option>
+                  <option value="">— выберите этап —</option>
                   {refs?.customer_stages.map((item) => (
                     <option key={item.id} value={item.id}>{item.name} ({item.probability}%)</option>
                   ))}
-                </select>
-                <div className="hint">Старая стадия сохранена отдельно для совместимости.</div>
+                </select> : <input id="customer_stage_id" className="input" readOnly value={project?.customer_stage?.name ?? "Не указан"} />}
+                {customerScheme ? <div className="error">{err("customer_stage_id")}</div> :
+                  <div className="hint">Сохранённый вспомогательный этап. Не изменяет прежнюю стадию и вероятность.</div>}
+                {customerScheme && <div className="hint" role="note" data-completion-state="unknown">Состояние завершения: не определено</div>}
               </div>
               <div className={cls("implementation_year")}>
                 <label htmlFor="implementation_year">{label("implementation_year")}</label>
@@ -561,13 +574,14 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
           <div className="col">
             <div className="row2">
-              <div className={cls("stage")}>
+              {!customerScheme && <div className={cls("stage")}>
                 <label htmlFor="stage">{label("stage")} (совместимость) {req}</label>
                 <select
                   id="stage"
                   className="select"
-                  {...register("stage", { onChange: (e) => onStageChange(e.target.value as Stage) })}
+                  {...register("stage")}
                 >
+                  {!values.stage && <option value="">— выберите стадию —</option>}
                   {refs?.stages.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -575,18 +589,18 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                   ))}
                 </select>
                 <div className="error">{err("stage")}</div>
-              </div>
+              </div>}
               <div className={cls("probability")}>
                 <label htmlFor="probability">{heading("probability")} {req}</label>
                 <input
                   id="probability"
                   className="input"
                   inputMode="numeric"
-                  readOnly={Boolean(values.customer_stage_id)}
+                  readOnly={customerScheme}
                   {...register("probability")}
                 />
-                <div className={values.customer_stage_id ? "hint" : "error"}>
-                  {values.customer_stage_id ? "Определяется выбранным этапом по ТЗ" : err("probability")}
+                <div className={customerScheme ? "hint" : "error"}>
+                  {customerScheme ? "Определяется сервером по выбранному этапу проекта" : err("probability")}
                 </div>
               </div>
             </div>

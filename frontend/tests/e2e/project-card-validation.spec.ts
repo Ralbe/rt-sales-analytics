@@ -6,7 +6,8 @@ const USER: User = { id: 1, email: "card@example.test", full_name: "Менедж
 const REFS: Refs = {
   segments: [{ id: 1, name: "Сегмент" }], services: [{ id: 1, name: "Интернет", group_name: null }],
   managers: [{ id: USER.id, full_name: USER.full_name }], stages: [{ id: "lead", name: "Лид", probability: 10 }],
-  payment_types: [], assessment_statuses: [{ id: 2, name: "ОЦЕНКА" }], project_indicators: [], customer_stages: [],
+  payment_types: [], assessment_statuses: [{ id: 2, name: "ОЦЕНКА" }], project_indicators: [],
+  customer_stages: [{ id: 10, name: "Этап нового проекта", probability: 25 }],
   cost_articles: [], cost_types: [], revenue_statuses: [], cost_statuses: [], roles: [{ id: "user", name: "Пользователь" }],
 };
 const CLIENT: ClientItem = { id: 1, name: "Клиент карточки", inn: "7707083893", segment: REFS.segments[0] };
@@ -44,8 +45,17 @@ async function openCard(page: Page, editing: boolean, initial: Partial<Project> 
     if ((request.method() === "POST" && path === "/projects") ||
         (request.method() === "PUT" && path === `/projects/${PROJECT.id}`)) {
       const body = request.postDataJSON();
+      expect(body).not.toHaveProperty("stage_scheme");
+      if (request.method() === "POST") {
+        expect(body.customer_stage_id).toBe(10);
+        expect(body).not.toHaveProperty("stage");
+        expect(body).not.toHaveProperty("probability");
+      }
       state.writes.push(body);
-      state.current = { ...state.current, ...body };
+      state.current = {
+        ...state.current, ...body,
+        ...(request.method() === "POST" ? { stage_scheme: "customer", stage: null, customer_stage: REFS.customer_stages[0], probability: 25 } : {}),
+      };
       return route.fulfill({ status: request.method() === "POST" ? 201 : 200, json: state.current });
     }
     if (request.method() === "PUT" && path === `/projects/${PROJECT.id}/financial-entries`) {
@@ -60,6 +70,7 @@ async function openCard(page: Page, editing: boolean, initial: Partial<Project> 
     await page.getByLabel(/Клиент/).fill("Клиент");
     await page.getByRole("button", { name: `${CLIENT.name} ИНН ${CLIENT.inn}`, exact: true }).click();
     await page.getByLabel(/Услуга/).selectOption("1");
+    await page.getByLabel("Этап по ТЗ", { exact: false }).selectOption("10");
     await page.getByLabel(/Сумма контракта/).fill("100");
     await page.getByLabel(/Дата начала/).fill(PROJECT.start_date);
     await page.getByLabel(/Плановое закрытие/).fill(PROJECT.expected_close_date);

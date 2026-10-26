@@ -112,7 +112,7 @@ def project_field_heading(key: str, labels: Mapping[str, str]) -> str:
 
 
 def same_project_values(before: dict, after: dict) -> bool:
-    metadata = {"_labels", "_field_labels"}
+    metadata = {"_labels", "_field_labels", "_stage_scheme"}
     return {key: value for key, value in before.items() if key not in metadata} == {
         key: value for key, value in after.items() if key not in metadata
     }
