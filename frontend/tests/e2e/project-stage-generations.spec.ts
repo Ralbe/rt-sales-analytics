@@ -164,6 +164,25 @@ test("прежняя карточка без stage_scheme: смена стади
   expect(state.unexpected).toEqual([]);
 });
 
+test("legacy без вспомогательного этапа: proposal→negotiation сохраняет ручные 37%", async ({ page }) => {
+  const state = await mockApi(page, { ...LEGACY, customer_stage: null });
+  await page.goto("/projects/42");
+  const probability = page.getByLabel("Вероятность", { exact: false });
+  await expect(page.locator("#stage")).toHaveValue("proposal");
+  await expect(probability).toHaveValue("37");
+  await page.locator("#stage").selectOption("negotiation");
+  await expect(probability).toHaveValue("37");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0]).toMatchObject({ stage: "negotiation", probability: 37 });
+  await expect(probability).toHaveValue("37");
+  await page.reload();
+  await expect(page.locator("#stage")).toHaveValue("negotiation");
+  await expect(probability).toHaveValue("37");
+  expect(state.unexpected).toEqual([]);
+});
+
 test("customer PUT: прочая правка сохраняет серверную вероятность, смена этапа обновляет её из справочника", async ({ page }) => {
   const state = await mockApi(page, CUSTOMER);
   await page.goto("/projects/42");
