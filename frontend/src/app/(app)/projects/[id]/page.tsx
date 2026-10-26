@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { ProjectForm } from "@/components/ProjectForm";
 import { ProjectArchiveActions } from "@/components/ProjectArchiveActions";
 import { ProjectHistory } from "@/components/ProjectHistory";
+import { ProjectPrint } from "@/components/ProjectPrint";
 import { QueryState } from "@/components/QueryState";
 import { api } from "@/lib/api";
 import type { Project } from "@/lib/types";
@@ -30,6 +31,7 @@ export default function ProjectPage() {
         {project && <ProjectArchiveActions project={project} disabled={projectQuery.isFetching || projectQuery.isError} />}
       </div>
       <div className="page-body">
+        <ProjectPrint project={project} pending={projectQuery.fetchStatus !== "idle"} failed={projectQuery.isError} />
         <QueryState query={projectQuery} title="Не удалось загрузить проект" />
         {project?.archived_at && (
           <div className="alert info" role="status">
