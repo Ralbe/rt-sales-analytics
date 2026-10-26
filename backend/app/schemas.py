@@ -175,6 +175,7 @@ class ProjectOut(ORM):
     name: str
     description: str
     client: RefItem
+    client_inn: str
     segment: RefItem
     manager: ManagerItem
     service: ServiceItem

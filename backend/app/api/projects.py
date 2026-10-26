@@ -42,12 +42,18 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 SORT_FIELDS = {
     "name": Project.name,
+    "client_inn": Client.inn,
+    "implementation_year": Project.implementation_year,
+    "customer_stage_id": Project.customer_stage_id,
     "amount": Project.amount,
     "start_date": Project.start_date,
     "expected_close_date": Project.expected_close_date,
     "updated_at": Project.updated_at,
 }
-SORT_PATTERN = r"^-?(name|amount|start_date|expected_close_date|updated_at)$"
+SORT_PATTERN = (
+    r"^-?(name|client_inn|implementation_year|customer_stage_id|"
+    r"amount|start_date|expected_close_date|updated_at)$"
+)
 EXPORT_LIMIT = 10_000
 
 
@@ -65,6 +71,7 @@ def to_out(p: Project) -> dict:
         "name": p.name,
         "description": p.description,
         "client": p.client,
+        "client_inn": p.client.inn,
         "segment": p.client.segment,
         "manager": p.manager,
         "service": p.service,
@@ -105,6 +112,8 @@ def _filtered_query(
     manager_id: list[int],
     stage: list[Stage],
     open_only: bool,
+    customer_stage_id: int | None = None,
+    implementation_year: int | None = None,
 ) -> Select:
     stmt = select(Project).options(selectinload(Project.financial_entries)).join(Client, Client.id == Project.client_id)
     scope = manager_scope(user)
@@ -121,6 +130,10 @@ def _filtered_query(
         stmt = stmt.where(Project.manager_id.in_(manager_id))
     if stage:
         stmt = stmt.where(Project.stage.in_(stage))
+    if customer_stage_id is not None:
+        stmt = stmt.where(Project.customer_stage_id == customer_stage_id)
+    if implementation_year is not None:
+        stmt = stmt.where(Project.implementation_year == implementation_year)
     if open_only:
         stmt = stmt.where(Project.stage.notin_(CLOSED_STAGES))
     return stmt
@@ -136,16 +149,24 @@ class ListParams:
         stage: list[Stage] = Query(default=[]),
         open_only: bool = False,
         sort: str = Query(default="-updated_at", pattern=SORT_PATTERN),
+        customer_stage_id: int | None = Query(default=None, ge=1),
+        implementation_year: int | None = Query(default=None, ge=1900, le=2200),
     ):
         self.q, self.segment_id, self.service_id = q, segment_id, service_id
         self.manager_id, self.stage, self.open_only, self.sort = manager_id, stage, open_only, sort
+        self.customer_stage_id, self.implementation_year = customer_stage_id, implementation_year
 
     def query(self, user: User) -> Select:
         stmt = _filtered_query(
-            user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only
+            user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only,
+            self.customer_stage_id, self.implementation_year,
         )
-        column = SORT_FIELDS[self.sort.lstrip("-")]
-        return stmt.order_by(column.desc() if self.sort.startswith("-") else column.asc(), Project.id.desc())
+        field = self.sort.lstrip("-")
+        column = SORT_FIELDS[field]
+        order = column.desc() if self.sort.startswith("-") else column.asc()
+        if field in {"customer_stage_id", "implementation_year"}:
+            order = order.nulls_last()
+        return stmt.order_by(order, Project.id.desc())
 
 
 @router.get("", response_model=ProjectPage)
