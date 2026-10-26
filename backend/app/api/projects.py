@@ -226,7 +226,10 @@ def export_projects(
     projects = db.scalars(params.query(user).limit(EXPORT_LIMIT)).unique().all()
     wb = Workbook()
     ws = wb.active
-    ws.title = "Проекты"
+    ws.title = "Проекты (6 стадий)" if params.open_only else "Проекты"
+    if params.open_only:
+        wb.create_sheet("Область данных").append([LEGACY_STAGE_SCOPE_NOTE])
+        wb.properties.description = LEGACY_STAGE_SCOPE_NOTE
     write_project_export_headers(ws, effective_project_field_labels(db))
     for cell in ws[1]:
         cell.font = Font(bold=True)
