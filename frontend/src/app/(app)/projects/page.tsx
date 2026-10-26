@@ -37,9 +37,11 @@ export default function ProjectsPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [sort, setSort] = useState("-updated_at");
   const [page, setPage] = useState(1);
+  const [archived, setArchived] = useState(false);
   const q = useDebounced(search.trim());
 
-  const params = { q, segment_id: segments, service_id: services, manager_id: managers, stage: stages, sort };
+  const params = { q, segment_id: segments, service_id: services, manager_id: managers, stage: stages, sort,
+    ...(archived && me?.role === "admin" ? { archived: true } : {}) };
   const projectsQuery = useQuery({
     queryKey: ["projects", params, page],
     queryFn: () => api<ProjectPage>("/projects", { query: { ...params, page, size: PAGE_SIZE } }),
@@ -61,6 +63,12 @@ export default function ProjectsPage() {
     <>
       <div className="page-header">
         <h1>Проекты</h1>
+        {me?.role === "admin" && (
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={archived} onChange={(event) => { setArchived(event.target.checked); setPage(1); }} />
+            Архив проектов
+          </label>
+        )}
         <input
           className="input"
           style={{ maxWidth: 300 }}

@@ -172,6 +172,7 @@ class ProjectIn(BaseModel):
 
 class ProjectOut(ORM):
     id: int
+    archived_at: datetime | None = None
     name: str
     description: str
     client: RefItem

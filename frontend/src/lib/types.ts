@@ -79,6 +79,7 @@ export interface Project {
   created_at: string;
   updated_at: string;
   financial_entries: FinancialEntry[];
+  archived_at?: string | null;
 }
 
 export interface FinancialEntry {

@@ -136,7 +136,7 @@ function saveDraft(values: FormValues | null) {
   }
 }
 
-export function ProjectForm({ project }: { project?: Project }) {
+export function ProjectForm({ project, readOnly = false }: { project?: Project; readOnly?: boolean }) {
   const refsQuery = useRefs();
   // Ждём справочники: иначе выпадающие списки не смогут показать восстановленные значения
   return (
@@ -148,19 +148,19 @@ export function ProjectForm({ project }: { project?: Project }) {
         empty={refsQuery.data?.services.length === 0}
         emptyText="В справочнике пока нет доступных услуг."
       />
-      {refsQuery.data && <ProjectFormInner project={project} />}
+      {refsQuery.data && <ProjectFormInner project={project} readOnly={readOnly} />}
     </>
   );
 }
 
-function ProjectFormInner({ project }: { project?: Project }) {
+function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Project; readOnly: boolean }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: me } = useMe();
   const { data: refs } = useRefs();
   const isNew = !project;
   const isUser = me?.role === "user";
-  const readOnly = !canEditProjects(me?.role);
+  const readOnly = forcedReadOnly || !canEditProjects(me?.role);
 
   const [formError, setFormError] = useState<string | null>(null);
   const [nameTaken, setNameTaken] = useState(false);

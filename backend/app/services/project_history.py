@@ -36,6 +36,7 @@ PROJECT_FIELDS = {
     "project_status": "Статус проекта",
     "realized_work": "Сделано за период",
     "period_plan": "Планы на период",
+    "archived_at": "Архивирование",
 }
 REFERENCE_MODELS = {
     "client_id": Client,
@@ -168,7 +169,7 @@ class HistoryFormatter:
         after = after if isinstance(after, dict) else {}
         if action == "create" and not after and "name" in payload:
             after = {"name": payload["name"]}
-        if action not in {"create", "update"}:
+        if action not in {"create", "update", "archive", "restore"}:
             return []
         changes = []
         for field, label in PROJECT_FIELDS.items():
@@ -310,6 +311,8 @@ def history_items(db: Session, rows) -> list[ProjectHistoryItem]:
                     "create": "Создание проекта",
                     "update": "Изменение карточки",
                     "replace_financial_entries": "Изменение финансовых строк",
+                    "archive": "Архивирование проекта",
+                    "restore": "Восстановление проекта",
                 }.get(log.action, "Изменение проекта"),
                 author_name=(
                     saved_author if isinstance(saved_author, str) and saved_author else author_name or "Автор не указан"

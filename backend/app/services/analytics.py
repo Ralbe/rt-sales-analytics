@@ -51,7 +51,7 @@ def load_frame(db: Session, f: Filters) -> pd.DataFrame:
         Project.service_id,
         Project.manager_id,
         Client.segment_id,
-    ).join(Client, Client.id == Project.client_id)
+    ).join(Client, Client.id == Project.client_id).where(Project.archived_at.is_(None))
     if f.scope_manager_id is not None:
         q = q.where(Project.manager_id == f.scope_manager_id)
     if f.segment_ids:

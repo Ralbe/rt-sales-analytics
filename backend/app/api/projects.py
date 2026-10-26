@@ -93,6 +93,7 @@ def to_out(p: Project) -> dict:
         "period_plan": p.period_plan,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
+        "archived_at": p.archived_at,
         "financial_entries": p.financial_entries,
     }
 
@@ -105,8 +106,12 @@ def _filtered_query(
     manager_id: list[int],
     stage: list[Stage],
     open_only: bool,
+    archived: bool = False,
 ) -> Select:
     stmt = select(Project).options(selectinload(Project.financial_entries)).join(Client, Client.id == Project.client_id)
+    if archived and user.role != Role.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Архив доступен только администратору")
+    stmt = stmt.where(Project.archived_at.is_not(None) if archived else Project.archived_at.is_(None))
     scope = manager_scope(user)
     if scope is not None:
         stmt = stmt.where(Project.manager_id == scope)
@@ -135,14 +140,16 @@ class ListParams:
         manager_id: list[int] = Query(default=[]),
         stage: list[Stage] = Query(default=[]),
         open_only: bool = False,
+        archived: bool = False,
         sort: str = Query(default="-updated_at", pattern=SORT_PATTERN),
     ):
         self.q, self.segment_id, self.service_id = q, segment_id, service_id
         self.manager_id, self.stage, self.open_only, self.sort = manager_id, stage, open_only, sort
+        self.archived = archived
 
     def query(self, user: User) -> Select:
         stmt = _filtered_query(
-            user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only
+            user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only, self.archived
         )
         column = SORT_FIELDS[self.sort.lstrip("-")]
         return stmt.order_by(column.desc() if self.sort.startswith("-") else column.asc(), Project.id.desc())
@@ -271,12 +278,59 @@ def export_projects(
     )
 
 
-def _get_visible(db: Session, project_id: int, user: User) -> Project:
-    project = db.get(Project, project_id)
+def _get_visible(db: Session, project_id: int, user: User, *, for_update: bool = False) -> Project:
+    query = select(Project).where(Project.id == project_id)
+    if for_update:
+        query = query.with_for_update(of=Project).execution_options(populate_existing=True)
+    project = db.scalar(query)
     scope = manager_scope(user)
-    if project is None or (scope is not None and project.manager_id != scope):
+    if (project is None or (scope is not None and project.manager_id != scope)
+            or (project.archived_at is not None and user.role != Role.admin)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Проект не найден")
     return project
+
+
+def _require_active(project: Project) -> None:
+    if project.archived_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Сначала восстановите проект из архива")
+
+
+def _set_archived(db: Session, project_id: int, user: User, *, archived: bool) -> dict:
+    project = _get_visible(db, project_id, user, for_update=True)
+    if (project.archived_at is not None) == archived:
+        return to_out(project)
+    before = project.archived_at.isoformat() if project.archived_at else None
+    project.archived_at = datetime.now(UTC) if archived else None
+    project.archived_by_id = user.id if archived else None
+    project.updated_at = func.now()
+    audit.record(
+        db, user.id, "archive" if archived else "restore", "project", project.id,
+        before={"archived_at": before},
+        after={"archived_at": project.archived_at.isoformat() if project.archived_at else None},
+        author_name=user.full_name,
+    )
+    db.commit()
+    cache.bump("analytics")
+    db.refresh(project)
+    return to_out(project)
+
+
+@router.post("/{project_id}/archive", response_model=ProjectOut)
+def archive_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.admin)),
+) -> dict:
+    return _set_archived(db, project_id, user, archived=True)
+
+
+@router.post("/{project_id}/restore", response_model=ProjectOut)
+def restore_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.admin)),
+) -> dict:
+    return _set_archived(db, project_id, user, archived=False)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -392,7 +446,8 @@ def update_project(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
-    project = _get_visible(db, project_id, user)
+    project = _get_visible(db, project_id, user, for_update=True)
+    _require_active(project)
     before = project_snapshot(db, project)
     _apply(db, project, data, user)
     after = project_snapshot(db, project)
@@ -416,7 +471,8 @@ def replace_financial_entries(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> list[ProjectFinancialEntry]:
-    project = _get_visible(db, project_id, user)
+    project = _get_visible(db, project_id, user, for_update=True)
+    _require_active(project)
     if len(entries) > 500:
         raise HTTPException(422, "Не более 500 финансовых строк на проект")
     category_fields = {
