@@ -14,9 +14,17 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import cache
 from app.models import STAGE_LABELS, Client, Project, Segment, Service, Stage, User
+from app.schemas import LEGACY_STAGE_SCOPE_NOTE
 
 FIT_WINDOW_DAYS = 180
+STAGE_SCOPE = {"stage_scope": "legacy", "scope_note": LEGACY_STAGE_SCOPE_NOTE}
+
+
+def cache_key(name: str, filters: "Filters", **params) -> str:
+    return cache.make_key("analytics", fn=name, filters=filters, stage_scope="legacy", **params)
+
 
 KPI_TITLES = {
     "funnel": ("Объём воронки", "rub"),
@@ -51,7 +59,9 @@ def load_frame(db: Session, f: Filters) -> pd.DataFrame:
         Project.service_id,
         Project.manager_id,
         Client.segment_id,
-    ).join(Client, Client.id == Project.client_id).where(Project.archived_at.is_(None))
+    ).join(Client, Client.id == Project.client_id).where(
+        Project.archived_at.is_(None), Project.stage_scheme == "legacy",
+    )
     if f.scope_manager_id is not None:
         q = q.where(Project.manager_id == f.scope_manager_id)
     if f.segment_ids:
@@ -114,7 +124,7 @@ def kpi(db: Session, f: Filters, as_of: date) -> dict:
                 "delta_pct": _delta_pct(value, previous),
             }
         )
-    return {"as_of": as_of, "previous_as_of": prev, "items": items}
+    return {"as_of": as_of, "previous_as_of": prev, "items": items, **STAGE_SCOPE}
 
 
 def daily_series(df: pd.DataFrame, start: date, end: date, metric: str) -> pd.Series:
@@ -183,7 +193,7 @@ def trend(db: Session, f: Filters, as_of: date, weeks: int, horizon: int, metric
         }
         for i, (p, b) in enumerate(zip(pred, band, strict=False))
     ]
-    return {"metric": metric, "history": history, "forecast": future, "method": method}
+    return {"metric": metric, "history": history, "forecast": future, "method": method, **STAGE_SCOPE}
 
 
 def _labels(db: Session, group_by: str) -> dict:
@@ -206,4 +216,4 @@ def breakdown(db: Session, f: Filters, as_of: date, group_by: str, metric: str) 
         for key, v in grouped.items()
         if v
     ]
-    return {"metric": metric, "group_by": group_by, "items": items}
+    return {"metric": metric, "group_by": group_by, "items": items, **STAGE_SCOPE}

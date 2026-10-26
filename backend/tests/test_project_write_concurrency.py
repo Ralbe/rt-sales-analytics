@@ -18,6 +18,7 @@ from uuid import uuid4
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
+from project_factories import create_legacy_project, legacy_payload
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
@@ -31,7 +32,7 @@ from app.core.config import settings
 from app.core.security import ACCESS_COOKIE, SCOPE_ACCESS, create_token
 from app.db import get_db
 from app.main import app
-from app.models import AuditLog, Project, ProjectFinancialEntry, User
+from app.models import AuditLog, Project, ProjectFinancialEntry, ReferenceValue, User
 from app.seed import seed
 
 WAIT_SECONDS = 10
@@ -342,3 +343,36 @@ def test_one_trillion_is_422_without_mutations(pg_api, operation, field):
         reopened = pg_api.request("GET", f"/{saved['id']}")
         assert reopened.status_code == 200, reopened.text
         assert reopened.json() == saved
+
+
+def test_pg_stage_scheme_and_probability_survive_separate_request_sessions(pg_api):
+    payload = pg_api.payload()
+    saved = pg_api.create(payload)
+    assert saved["stage_scheme"] == "customer" and saved["stage"] is None
+    with Session(pg_api.engine) as db:
+        reference = db.get(ReferenceValue, saved["customer_stage"]["id"])
+        reference.probability = 13
+        reference.is_active = False
+        db.commit()
+    response = pg_api.request("PUT", f"/{saved['id']}", payload | {"probability": 99, "description": "Правка"})
+    assert response.status_code == 200, response.text
+    assert response.json()["probability"] == saved["probability"]
+    assert response.json()["stage"] is None and response.json()["closed_at"] is None
+    with Session(pg_api.engine) as db:
+        legacy = create_legacy_project(db, name=f"Прежний проект {uuid4().hex}",
+                                       customer_stage_id=saved["customer_stage"]["id"], probability=37)
+        legacy_id = legacy.id
+        body = legacy_payload(db, name=legacy.name, stage="won", customer_stage_id=legacy.customer_stage_id)
+        body.pop("probability")
+    response = pg_api.request("PUT", f"/{legacy_id}", body)
+    assert response.status_code == 200, response.text
+    assert response.json()["stage_scheme"] == "legacy" and response.json()["stage"] == "won"
+    assert response.json()["probability"] == 37 and response.json()["closed_at"] is not None
+    assert response.json()["customer_stage"]["id"] == saved["customer_stage"]["id"]
+    for project_id, project_body in ((saved["id"], payload), (legacy_id, body)):
+        before = pg_api.request("GET", f"/{project_id}").json()
+        counts = _counts(pg_api.engine)
+        response = pg_api.request("PUT", f"/{project_id}", project_body | {"stage_scheme": "customer"})
+        assert response.status_code == 422
+        assert pg_api.request("GET", f"/{project_id}").json() == before
+        assert _counts(pg_api.engine) == counts

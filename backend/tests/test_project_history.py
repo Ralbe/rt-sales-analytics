@@ -2,6 +2,7 @@ from datetime import datetime
 
 import pytest
 from conftest import login
+from project_factories import create_legacy_project, legacy_payload
 from sqlalchemy import select
 from test_projects import _payload
 
@@ -102,7 +103,7 @@ def test_history_validates_limits(as_user, db, params):
 def test_create_history_has_readable_snapshot_and_safe_author(as_user, db):
     refs = as_user.get("/api/refs").json()
     payment = refs["payment_types"][0]
-    project_id = _create(as_user, db, payment_type_id=payment["id"], amount="999999999999.99")
+    project_id = create_legacy_project(db, payment_type_id=payment["id"], amount="999999999999.99").id
     item = _history(as_user, project_id)["items"][0]
     me = db.scalar(select(User).where(User.email == "manager1@example.com"))
     assert item["title"] == "Создание проекта"
@@ -119,8 +120,8 @@ def test_create_history_has_readable_snapshot_and_safe_author(as_user, db):
 
 
 def test_project_updates_and_closing_are_audited_without_noops(as_user, db):
-    project_id = _create(as_user, db)
-    payload = _payload(db, description="Новое описание", stage="won")
+    project_id = create_legacy_project(db).id
+    payload = legacy_payload(db, description="Новое описание", stage="won")
     for _ in range(2):
         response = as_user.put(f"/api/projects/{project_id}", json=payload)
         assert response.status_code == 200, response.text
@@ -132,7 +133,7 @@ def test_project_updates_and_closing_are_audited_without_noops(as_user, db):
     assert changes["description"]["after"] == "Новое описание"
     assert changes["closed_at"]["before"] == "Не задано"
     assert changes["closed_at"]["after"] != "Не задано"
-    response = as_user.put(f"/api/projects/{project_id}", json=_payload(db))
+    response = as_user.put(f"/api/projects/{project_id}", json=legacy_payload(db))
     assert response.status_code == 200
     changes = {row["field"]: row for row in _history(as_user, project_id)["items"][0]["changes"]}
     assert changes["closed_at"]["after"] == "Не задано"

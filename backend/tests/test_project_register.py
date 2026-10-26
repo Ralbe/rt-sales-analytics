@@ -38,6 +38,7 @@ def register(db):
             name=f"{PREFIX} {index} " + "П" * (300 - len(PREFIX) - 3),
             description="Исходное описание",
             client=client, manager=owner, service=service,
+            stage_scheme="legacy",
             stage=Stage.won if index == 1 else Stage.proposal,
             customer_stage=customer_stage, probability=37,
             amount=Decimal("987654321098.76"), cost=Decimal("123456789012.34"),

@@ -236,6 +236,7 @@ def project_snapshot(db: Session, project: Project, *, field_labels: dict[str, s
     )
     for field in ("amount", "cost"):
         snapshot[field] = decimal_text(snapshot[field], 2)
+    snapshot["_stage_scheme"] = project.stage_scheme
     formatter = HistoryFormatter(db, [snapshot])
     snapshot["_labels"] = {
         field: formatter.reference(field, snapshot)
