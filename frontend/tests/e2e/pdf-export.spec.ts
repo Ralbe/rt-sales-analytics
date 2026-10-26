@@ -39,6 +39,7 @@ async function openDashboard(page: Page, options: {
   trendGate?: Promise<void>;
   trendError?: boolean;
   refsError?: boolean;
+  refs?: () => Refs;
 } = {}) {
   const requests: { path: string; method: string }[] = [];
   const current = { ...dashboard, widgets: options.widgets ?? widgets, editable: options.editable ?? true };
@@ -59,7 +60,7 @@ async function openDashboard(page: Page, options: {
     }
     switch (url.pathname) {
       case "/api/auth/me": await route.fulfill({ json: { ...user, role: options.role ?? user.role } }); break;
-      case "/api/refs": await route.fulfill(options.refsError ? { status: 500, json: { detail: "Ошибка справочников" } } : { json: refs }); break;
+      case "/api/refs": await route.fulfill(options.refsError ? { status: 500, json: { detail: "Ошибка справочников" } } : { json: options.refs?.() ?? refs }); break;
       case "/api/dashboards": await route.fulfill({ json: [current] }); break;
       case "/api/dashboards/41": await route.fulfill({ json: current }); break;
       case "/api/analytics/kpi": await route.fulfill({ json: {
@@ -98,6 +99,55 @@ async function preparePrint(page: Page) {
   expect(await page.evaluate(() => (window as typeof window & { printReady: string }).printReady)).toBe("true");
   return page.locator("[data-dashboard-print]");
 }
+
+test("подписи виджета проектов обновляются из refs, а PDF сохраняет снимок без запросов при печати", async ({ page }, testInfo) => {
+  let labels = { name: "Инициатива", client_id: "Заказчик", manager_id: "Куратор", amount: "Договор" };
+  const requests = await openDashboard(page, { widgets: [widgets[4]], refs: () => ({ ...refs, project_field_labels: labels }) });
+  const liveHeaders = page.locator(".widget .widget-table thead th");
+  const firstHeaders = ["Инициатива", "Заказчик", "Куратор", "Договор, ₽"];
+  await expect(liveHeaders).toHaveText(firstHeaders);
+  const projectRow = page.locator(".widget .widget-table tbody tr").first();
+  await expect(projectRow).toContainText("Проект № 1 — модернизация региональной инфраструктуры связи");
+  await expect(projectRow).toContainText("ООО «Волгоградская промышленная компания»");
+  await expect(projectRow).toContainText(user.full_name);
+  const beforeFirstPrint = requests.length;
+  const report = await preparePrint(page);
+  await expect(report.locator('[data-widget-id="projects"] thead th')).toHaveText(firstHeaders);
+  expect(requests.length).toBe(beforeFirstPrint);
+
+  labels = { name: "Инициатива обновлена", client_id: "Контрагент", manager_id: "Ведущий проекта", amount: "Стоимость договора" };
+  // Возврат соединения обновляет устаревшие refs через настоящий React Query.
+  await page.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 301_000;
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect.poll(() => requests.filter((request) => request.path === "/api/refs").length).toBe(2);
+  const updatedHeaders = ["Инициатива обновлена", "Контрагент", "Ведущий проекта", "Стоимость договора, ₽"];
+  await expect(liveHeaders).toHaveText(updatedHeaders);
+  await expect(report.locator('[data-widget-id="projects"] thead th')).toHaveText(firstHeaders);
+  await expect(report.locator('[data-widget-id="projects"] tbody tr').first()).toContainText(user.full_name);
+  const beforePdf = requests.length;
+  await page.emulateMedia({ media: "print" });
+  const pdfPath = testInfo.outputPath("dashboard-labels-frozen.pdf");
+  const pdf = await page.pdf({ path: pdfPath, preferCSSPageSize: true, printBackground: true });
+  expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  expect(requests.length).toBe(beforePdf);
+  await testInfo.attach("Снимок подписей до refetch refs", { path: pdfPath, contentType: "application/pdf" });
+
+  await page.emulateMedia({ media: "screen" });
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  const printButton = page.getByRole("button", { name: "PDF / Печать", exact: true });
+  await expect(printButton).toBeEnabled();
+  const beforeSecondPrint = requests.length;
+  await printButton.click();
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(2);
+  await expect(report.locator('[data-widget-id="projects"] thead th')).toHaveText(updatedHeaders);
+  await expect(report.locator('[data-widget-id="projects"] tbody tr').first()).toContainText("ООО «Волгоградская промышленная компания»");
+  expect(requests.length).toBe(beforeSecondPrint);
+  expect(requests.every((request) => request.method === "GET")).toBeTruthy();
+});
 
 test("печать ждёт все данные и не печатает незагруженный дашборд через меню браузера", async ({ page }) => {
   let release!: () => void;

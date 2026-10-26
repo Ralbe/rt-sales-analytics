@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Chart } from "@/components/Chart";
 import { api } from "@/lib/api";
 import { count, date, money, pct } from "@/lib/format";
+import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldLabels } from "@/lib/project-field-labels";
 import type {
   BreakdownResponse,
   DashboardFilters,
@@ -215,6 +216,7 @@ export function BreakdownView({ widget, data, printable = false }: { widget: Wid
 }
 
 export function ProjectsWidget({ widget, filters }: Props) {
+  const { labels } = useProjectFieldLabels();
   const limit = widget.config.limit ?? 8;
   const q = useQuery({
     queryKey: widgetQueryKey(widget, filters),
@@ -224,20 +226,24 @@ export function ProjectsWidget({ widget, filters }: Props) {
       }),
   });
   if (!q.data) return <State loading={q.isLoading} error={q.error} />;
-  return <ProjectsView data={q.data} />;
+  return <ProjectsView data={q.data} labels={labels} />;
 }
 
-export function ProjectsView({ data, printable = false }: { data: ProjectPage; printable?: boolean }) {
+export type ProjectsViewLabels = Pick<ProjectFieldLabels, "name" | "client_id" | "manager_id" | "amount">;
+
+export function ProjectsView({ data, labels, printable = false }: {
+  data: ProjectPage; labels: ProjectsViewLabels; printable?: boolean;
+}) {
   const router = useRouter();
   return (
     <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
       <table className="table">
         <thead>
           <tr>
-            <th>Проект</th>
-            <th>Клиент</th>
-            <th>Ответственный</th>
-            <th className="num">Сумма</th>
+            <th>{labels.name}</th>
+            <th>{labels.client_id}</th>
+            <th>{labels.manager_id}</th>
+            <th className="num">{labels.amount}{PROJECT_FIELD_DEFAULTS.amount.suffix}</th>
           </tr>
         </thead>
         <tbody>
