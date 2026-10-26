@@ -322,3 +322,15 @@ test("ошибка window.print освобождает снимок и оста�
   await expect(report(page)).toBeEmpty();
   await expect(button(page)).toBeEnabled();
 });
+
+for (const stageScheme of ["legacy", "customer"] as const) {
+  test("nullable stage в печати: «Не применяется» для схемы " + stageScheme + ", без соответствия 6↔10", async ({ page }) => {
+    const state = await openProject(page, { project: { ...PROJECT, stage_scheme: stageScheme, stage: null } });
+    await preparePrint(page);
+    await expect(field(page, "stage")).toHaveText("Не применяется");
+    await expect(field(page, "customer_stage")).toHaveText(PROJECT.customer_stage!.name);
+    await expect(field(page, "probability")).toHaveText(String(PROJECT.probability));
+    expect(state.requests.every((request) => request.startsWith("GET "))).toBe(true);
+    expect(state.unexpected).toEqual([]);
+  });
+}

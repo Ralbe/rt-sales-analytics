@@ -58,12 +58,14 @@ export default function ProjectsPage() {
   const [sort, setSort] = useState("-updated_at");
   const [page, setPage] = useState(1);
   const [archived, setArchived] = useState(false);
+  const [openOnly, setOpenOnly] = useState(false);
   const q = useDebounced(search.trim());
 
   const params = {
     q, segment_id: segments, service_id: services, manager_id: managers, stage: stages,
     customer_stage_id: customerStage, implementation_year: implementationYear, sort,
     ...(archived && me?.role === "admin" ? { archived: true } : {}),
+    ...(openOnly ? { open_only: true } : {}),
   };
   const projectsQuery = useQuery({
     queryKey: ["projects", params, page],
@@ -82,7 +84,7 @@ export default function ProjectsPage() {
     setSort((s) => (s === `-${field}` ? field : `-${field}`));
     setPage(1);
   };
-  const stageName = (id: Stage) => refs?.stages.find((s) => s.id === id)?.name ?? id;
+  const stageName = (id: Stage | null) => id === null ? "Не применяется" : refs?.stages.find((s) => s.id === id)?.name ?? id;
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
   return (
@@ -154,6 +156,11 @@ export default function ProjectsPage() {
       </div>
 
       <div className="page-body">
+        <label className="check">
+          <input type="checkbox" checked={openOnly} aria-describedby="open-projects-scope" onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
+          Только открытые проекты прежних стадий
+        </label>
+        <p className="hint" id="open-projects-scope">Фильтр открытых проектов применяется только к прежним шести стадиям. Проекты с новыми этапами не включаются.</p>
         <QueryState query={refsQuery} title="Не удалось загрузить справочники фильтров" loadingText="Загружаем справочники фильтров…" />
         <QueryState query={projectsQuery} title="Не удалось загрузить проекты" loadingText="Загружаем проекты…" />
         <div className="card" style={{ overflow: "auto", opacity: isFetching ? 0.7 : 1 }}>

@@ -109,7 +109,7 @@ function makeSnapshot(project: Project, refs: Refs, labels: Labels): Snapshot {
       ] },
       { title: "Этапы и признаки", rows: [
         row("customer_stage", text(project.customer_stage?.name)),
-        row("stage", refs.stages.find((item) => item.id === project.stage)?.name ?? `Недоступное значение (${project.stage})`),
+        row("stage", project.stage === null ? "Не применяется" : refs.stages.find((item) => item.id === project.stage)?.name ?? `Недоступное значение (${project.stage})`),
         ...rows(["probability", "implementation_year"]), row("indicator", text(project.indicator?.name)),
         row("accepted_for_forecast", flag(project.accepted_for_forecast)), row("assessment_status", text(project.assessment_status?.name)),
         row("subsidiary_implementation", flag(project.subsidiary_implementation)), row("management_control", flag(project.management_control)),

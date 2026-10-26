@@ -79,11 +79,14 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     close.setUTCDate(close.getUTCDate() + 30);
     const projectResponse = await member.request.post("/api/projects", { data: {
       name: `Приёмочный проект ${suffix}`, client_id: clients[0].id, service_id: refs.services[0].id,
-      stage: "lead", probability: 10, amount: "1000.00", cost: "100.00",
+      customer_stage_id: refs.customer_stages[0].id, amount: "1000.00", cost: "100.00",
       start_date: start.toISOString().slice(0, 10), expected_close_date: close.toISOString().slice(0, 10),
     } });
     expect(projectResponse.status()).toBe(201);
     const project = await projectResponse.json() as Project;
+    expect(project.stage_scheme).toBe("customer");
+    expect(project.stage).toBeNull();
+    expect(project.probability).toBe(refs.customer_stages[0].probability);
     expect(project.manager.id).toBe(created.id);
     await page.goto(`/projects/${project.id}`);
     await expect(page.getByRole("heading", { name: project.name, exact: true })).toBeVisible();

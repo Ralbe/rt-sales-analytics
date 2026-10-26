@@ -33,7 +33,7 @@ function totp(secret: string, now = Date.now()): string {
   return String(binary % 1_000_000).padStart(6, "0");
 }
 
-test("вход с TOTP, открытие дашборда и создание проекта", async ({ page }) => {
+test("вход с TOTP, стартовый реестр и создание проекта с новым этапом", async ({ page }) => {
   const email = process.env.E2E_EMAIL;
   const password = process.env.E2E_PASSWORD;
   const totpSecret = process.env.E2E_TOTP_SECRET;
@@ -75,8 +75,8 @@ test("вход с TOTP, открытие дашборда и создание п
     await page.getByLabel("Код из приложения").fill("").catch(() => undefined);
   }
   expect(mfaResponse.ok()).toBeTruthy();
-  await page.waitForURL((url) => /^\/dashboards(?:\/\d+)?$/.test(url.pathname));
-  await expect(page.getByLabel("Название дашборда")).toHaveValue(/Дашборд/);
+  await page.waitForURL((url) => url.pathname === "/projects");
+  await expect(page.getByRole("heading", { name: "Проекты", exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Новый проект" }).click();
   await expect(page.getByRole("heading", { name: "Новый проект" })).toBeVisible();
@@ -88,6 +88,7 @@ test("вход с TOTP, открытие дашборда и создание п
   await expect(clientOption).toBeVisible();
   await clientOption.click();
   await page.getByLabel(/Услуга/).selectOption({ index: 1 });
+  await page.getByLabel("Этап по ТЗ", { exact: false }).selectOption({ index: 1 });
   await page.getByLabel(/Ответственный/).selectOption({ label: "Мария Продажина" });
   await page.getByLabel(/Сумма контракта/).fill("1000");
 
@@ -103,6 +104,10 @@ test("вход с TOTP, открытие дашборда и создание п
     page.getByRole("button", { name: "Создать проект" }).click(),
   ]);
   expect(createResponse.status()).toBe(201);
+  const created = await createResponse.json();
+  expect(created.stage_scheme).toBe("customer");
+  expect(created.stage).toBeNull();
+  expect(created.customer_stage?.id).toBeTruthy();
 
   await page.waitForURL((url) => /^\/projects\/\d+$/.test(url.pathname));
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();

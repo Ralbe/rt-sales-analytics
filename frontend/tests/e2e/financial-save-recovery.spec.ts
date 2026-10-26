@@ -39,12 +39,15 @@ const PROJECT: Project = {
   ],
 };
 
-type ProjectWrite = Pick<Project, "name" | "description" | "amount" | "cost" | "stage" | "probability" |
+type ProjectWrite = Pick<Project, "name" | "description" | "amount" | "cost" |
   "start_date" | "expected_close_date" | "period_plan"> & {
   client_id: number;
   service_id: number;
   manager_id: number;
   financial_entries: FinancialWrite[];
+  stage?: Project["stage"];
+  probability?: number;
+  customer_stage_id?: number;
 };
 type FinancialWrite = Pick<FinancialEntry, "kind" | "year" | "month" | "amount" | "vat_included"> & {
   status_id: number;
@@ -119,6 +122,13 @@ async function mockApi(page: Page, editing = false, options: {
     if ((method === "POST" && path === "/projects") ||
       (method === "PUT" && path === `/projects/${PROJECT.id}` && state.current)) {
       const body: ProjectWrite = request.postDataJSON();
+      expect(body).not.toHaveProperty("stage_scheme");
+      const customerScheme = method === "POST" || state.current?.stage_scheme === "customer";
+      if (customerScheme) {
+        expect(body.customer_stage_id).toBe(8);
+        expect(body).not.toHaveProperty("stage");
+        expect(body).not.toHaveProperty("probability");
+      }
       (method === "POST" ? state.creates : state.updates).push(body);
       state.writes.push(`${method} ${path}`);
       expect(Array.isArray(body.financial_entries)).toBe(true);
@@ -138,6 +148,7 @@ async function mockApi(page: Page, editing = false, options: {
       // Canonical response содержит нормализованные суммы и справочники, без входных *_id.
       state.current = {
         ...(state.current ?? PROJECT), ...body,
+        ...(customerScheme ? { stage_scheme: "customer", stage: null, customer_stage: REFS.customer_stages[0], probability: 30 } : {}),
         updated_at: "2026-10-25T12:00:00Z",
         financial_entries: body.financial_entries.map((row, index) => ({
           id: 30 + index, kind: row.kind, year: row.year, month: row.month,
@@ -230,6 +241,7 @@ async function fillNewProject(page: Page, name: string) {
   await page.getByLabel(/Клиент/).fill("Тестовый");
   await page.getByRole("button", { name: /Тестовый клиент ИНН/ }).click();
   await page.getByLabel(/Услуга/).selectOption("3");
+  await page.getByLabel("Этап по ТЗ", { exact: false }).selectOption("8");
   await expect(page.getByLabel(/Ответственный/)).toHaveValue(USER.full_name);
   await page.getByLabel(/Сумма контракта/).fill("10000");
   await page.getByLabel(/Себестоимость/).fill("2000");
