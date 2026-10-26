@@ -74,18 +74,18 @@ test("мастер-ТЗ: реальные подписи и история, ат
     await labelInput.locator("xpath=ancestor::tr").getByRole("button", { name: "Сохранить", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "Подпись сохранена" })).toBeVisible();
     await page.goto(`/projects/${project.id}`);
-    const nameInput = page.getByLabel(firstLabel, { exact: true });
+    const nameInput = page.getByLabel(firstLabel);
     await expect(nameInput).toHaveValue(name);
     await nameInput.fill(`${name} — обновлено`);
     const savedResponse = page.waitForResponse((response) =>
       response.url().endsWith(`/api/projects/${project.id}`) && response.request().method() === "PUT");
-    await page.getByRole("button", { name: "Сохранить изменения", exact: true }).click();
+    await page.getByRole("button", { name: "Сохранить", exact: true }).click();
     expect((await savedResponse).status()).toBe(200);
     await expect(page.getByText(/Сохранено в/)).toBeVisible();
     const rename = await page.request.put("/api/project-fields/name", { data: { label: secondLabel } });
     expect(rename.status()).toBe(200);
     await page.reload();
-    await expect(page.getByLabel(secondLabel, { exact: true })).toHaveValue(`${name} — обновлено`);
+    await expect(page.getByLabel(secondLabel)).toHaveValue(`${name} — обновлено`);
     const historyResponse = await page.request.get(`/api/projects/${project.id}/history`);
     expect(historyResponse.status()).toBe(200);
     const history = await historyResponse.json();
@@ -104,7 +104,7 @@ test("мастер-ТЗ: реальные подписи и история, ат
     page.once("dialog", (dialog) => { void dialog.accept(); });
     await page.getByRole("button", { name: "В архив", exact: true }).click();
     expect((await archiveResponse).status()).toBe(200);
-    await expect(page.getByLabel(secondLabel, { exact: true })).toBeDisabled();
+    await expect(page.getByLabel(secondLabel)).toBeDisabled();
     await expect(page.getByRole("status").filter({ hasText: "Проект в архиве" })).toBeVisible();
     expect((await other.request.get(`/api/projects/${project.id}`)).status()).toBe(404);
     expect((await other.request.get(`/api/projects/${project.id}/history`)).status()).toBe(404);
@@ -116,7 +116,7 @@ test("мастер-ТЗ: реальные подписи и история, ат
     const restoreResponse = page.waitForResponse((response) => response.url().endsWith(`/api/projects/${project.id}/restore`));
     await page.getByRole("button", { name: "Восстановить проект", exact: true }).click();
     expect((await restoreResponse).status()).toBe(200);
-    await expect(page.getByLabel(secondLabel, { exact: true })).toBeEnabled();
+    await expect(page.getByLabel(secondLabel)).toBeEnabled();
     const restored = await (await page.request.get(`/api/projects/${project.id}`)).json() as Project;
     expect(restored.created_at).toBe(project.created_at);
     expect(restored.financial_entries).toEqual(project.financial_entries);
