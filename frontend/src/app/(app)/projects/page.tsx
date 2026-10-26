@@ -10,7 +10,7 @@ import { QueryState } from "@/components/QueryState";
 import { api, toQuery } from "@/lib/api";
 import { date, money } from "@/lib/format";
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
-import { useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
+import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import type { ProjectPage, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 20;
@@ -31,6 +31,8 @@ export default function ProjectsPage() {
   const { data: me } = useMe();
   const refsQuery = useRefs();
   const { label } = useProjectFieldLabels();
+  const filterLabel = (key: ProjectFieldKey, original: string) =>
+    label(key) === PROJECT_FIELD_DEFAULTS[key].label ? original : label(key);
   const refs = refsQuery.data;
   const [search, setSearch] = useState("");
   const [segments, setSegments] = useState<number[]>([]);
@@ -83,17 +85,17 @@ export default function ProjectsPage() {
         />
         {refs && (
           <div className="filters">
-            <MultiSelect label={label("segment")} options={refs.segments} value={segments} onChange={withReset(setSegments)} />
-            <MultiSelect label={label("service_id")} options={refs.services} value={services} onChange={withReset(setServices)} />
+            <MultiSelect label={filterLabel("segment", "Сегменты")} options={refs.segments} value={segments} onChange={withReset(setSegments)} />
+            <MultiSelect label={filterLabel("service_id", "Услуги")} options={refs.services} value={services} onChange={withReset(setServices)} />
             {seesAllProjects(me?.role) && (
               <MultiSelect
-                label={label("manager_id")}
+                label={filterLabel("manager_id", "Менеджеры")}
                 options={refs.managers.map((m) => ({ id: m.id, name: m.full_name }))}
                 value={managers}
                 onChange={withReset(setManagers)}
               />
             )}
-            <MultiSelect label={label("stage")} options={refs.stages} value={stages} onChange={withReset(setStages)} />
+            <MultiSelect label={filterLabel("stage", "Стадии")} options={refs.stages} value={stages} onChange={withReset(setStages)} />
           </div>
         )}
         <div className="spacer" />
