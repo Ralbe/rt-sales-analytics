@@ -132,12 +132,12 @@ test("сохранение карточки и финансов обновляе
   const history = page.getByRole("region", { name: "История изменений" });
   await expect(history).toContainText("История изменений пока пуста.");
   await page.getByLabel("Суть проекта").fill("После сохранения");
-  await page.getByLabel("Сумма, тыс. рублей").fill("2.345");
+  await page.getByLabel("Сумма, тыс. ₽").fill("2.345");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
   await expect(history).toContainText("После сохранения");
   await expect(history).toContainText("2,345 тыс. ₽");
   await expect(history.getByRole("listitem")).toHaveCount(2);
-  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveValue("2.345");
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveValue("2.345");
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
   expect(state.historyRequests).toBeGreaterThan(1);
 });
@@ -147,7 +147,7 @@ test("сохранение только финансов обновляет ис
   await page.goto("/projects/42");
   const history = page.getByRole("region", { name: "История изменений" });
   await expect(history).toContainText("История изменений пока пуста.");
-  await page.getByLabel("Сумма, тыс. рублей").fill("2.345");
+  await page.getByLabel("Сумма, тыс. ₽").fill("2.345");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
   await expect(history).toContainText("2,345 тыс. ₽");
   await expect(history.getByRole("listitem")).toHaveCount(1);

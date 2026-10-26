@@ -10,25 +10,27 @@ import { QueryState } from "@/components/QueryState";
 import { api, toQuery } from "@/lib/api";
 import { date, money } from "@/lib/format";
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
+import { useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import type { ProjectPage, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 20;
-const COLUMNS: { key: string; label: string; sort?: string; num?: boolean }[] = [
-  { key: "name", label: "Проект", sort: "name" },
-  { key: "client", label: "Клиент" },
-  { key: "segment", label: "Сегмент" },
-  { key: "service", label: "Услуга" },
-  { key: "manager", label: "Ответственный" },
-  { key: "stage", label: "Стадия" },
-  { key: "amount", label: "Сумма", sort: "amount", num: true },
-  { key: "margin", label: "Маржа", num: true },
-  { key: "close", label: "План закрытия", sort: "expected_close_date" },
+const COLUMNS: { key: string; labelKey: ProjectFieldKey; sort?: string; num?: boolean }[] = [
+  { key: "name", labelKey: "name", sort: "name" },
+  { key: "client", labelKey: "client_id" },
+  { key: "segment", labelKey: "segment" },
+  { key: "service", labelKey: "service_id" },
+  { key: "manager", labelKey: "manager_id" },
+  { key: "stage", labelKey: "stage" },
+  { key: "amount", labelKey: "amount", sort: "amount", num: true },
+  { key: "margin", labelKey: "margin_pct", num: true },
+  { key: "close", labelKey: "expected_close_date", sort: "expected_close_date" },
 ];
 
 export default function ProjectsPage() {
   const router = useRouter();
   const { data: me } = useMe();
   const refsQuery = useRefs();
+  const { label } = useProjectFieldLabels();
   const refs = refsQuery.data;
   const [search, setSearch] = useState("");
   const [segments, setSegments] = useState<number[]>([]);
@@ -81,17 +83,17 @@ export default function ProjectsPage() {
         />
         {refs && (
           <div className="filters">
-            <MultiSelect label="Сегменты" options={refs.segments} value={segments} onChange={withReset(setSegments)} />
-            <MultiSelect label="Услуги" options={refs.services} value={services} onChange={withReset(setServices)} />
+            <MultiSelect label={label("segment")} options={refs.segments} value={segments} onChange={withReset(setSegments)} />
+            <MultiSelect label={label("service_id")} options={refs.services} value={services} onChange={withReset(setServices)} />
             {seesAllProjects(me?.role) && (
               <MultiSelect
-                label="Менеджеры"
+                label={label("manager_id")}
                 options={refs.managers.map((m) => ({ id: m.id, name: m.full_name }))}
                 value={managers}
                 onChange={withReset(setManagers)}
               />
             )}
-            <MultiSelect label="Стадии" options={refs.stages} value={stages} onChange={withReset(setStages)} />
+            <MultiSelect label={label("stage")} options={refs.stages} value={stages} onChange={withReset(setStages)} />
           </div>
         )}
         <div className="spacer" />
@@ -120,7 +122,7 @@ export default function ProjectsPage() {
                     className={`${c.sort ? "sortable" : ""} ${c.num ? "num" : ""}`}
                     onClick={c.sort ? () => toggleSort(c.sort!) : undefined}
                   >
-                    {c.label}
+                    {label(c.labelKey)}
                     {c.sort && sort.replace("-", "") === c.sort ? (sort.startsWith("-") ? " ↓" : " ↑") : ""}
                   </th>
                 ))}

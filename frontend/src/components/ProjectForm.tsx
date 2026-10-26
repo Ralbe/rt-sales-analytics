@@ -12,6 +12,7 @@ import { QueryState } from "@/components/QueryState";
 import { ApiError, api, post, put } from "@/lib/api";
 import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
+import { useProjectFieldLabels } from "@/lib/project-field-labels";
 import { projectHistoryKey } from "@/lib/history-types";
 import type { FinancialEntry, Project, Stage } from "@/lib/types";
 
@@ -158,6 +159,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const queryClient = useQueryClient();
   const { data: me } = useMe();
   const { data: refs } = useRefs();
+  const { label, heading } = useProjectFieldLabels();
   const isNew = !project;
   const isUser = me?.role === "user";
   const readOnly = forcedReadOnly || !canEditProjects(me?.role);
@@ -361,7 +363,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
         <div className="form-grid">
           <div className="col">
             <div className={`field ${err("name") || nameTaken ? "has-error" : ""}`}>
-              <label htmlFor="name">Название проекта {req}</label>
+              <label htmlFor="name">{label("name")} {req}</label>
               <input id="name" className="input" {...register("name", { onBlur: checkName })} />
               <div className="error">
                 {err("name") ?? (nameTaken ? "У этого клиента уже есть проект с таким названием" : "")}
@@ -369,7 +371,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
             </div>
 
             <div className={cls("client")}>
-              <label htmlFor="client">Клиент {req}</label>
+              <label htmlFor="client">{label("client_id")} {req}</label>
               <Controller
                 control={control}
                 name="client"
@@ -387,13 +389,13 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
               {err("client") ? (
                 <div className="error">{err("client")}</div>
               ) : (
-                <div className="hint">{values.client?.segment ? `Сегмент: ${values.client.segment}` : ""}</div>
+                <div className="hint">{values.client?.segment ? `${label("segment")}: ${values.client.segment}` : ""}</div>
               )}
             </div>
 
             <div className="row2">
               <div className={cls("service_id")}>
-                <label htmlFor="service_id">Услуга {req}</label>
+                <label htmlFor="service_id">{label("service_id")} {req}</label>
                 <select id="service_id" className="select" {...register("service_id")}>
                   <option value="">— выберите —</option>
                   {refs?.services.map((s) => (
@@ -405,7 +407,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <div className="error">{err("service_id")}</div>
               </div>
               <div className={cls("manager_id")}>
-                <label htmlFor="manager_id">Ответственный {req}</label>
+                <label htmlFor="manager_id">{label("manager_id")} {req}</label>
                 {isUser ? (
                   // Пользователь ведёт только свои проекты.
                   <input id="manager_id" className="input" readOnly value={project?.manager.full_name ?? me?.full_name ?? ""} />
@@ -426,14 +428,14 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
             </div>
 
             <div className={cls("description")}>
-              <label htmlFor="description">Суть проекта</label>
+              <label htmlFor="description">{label("description")}</label>
               <textarea id="description" className="textarea" rows={4} {...register("description")} />
               <div className="error">{err("description")}</div>
             </div>
 
             <div className="row2">
               <div className={cls("payment_type_id")}>
-                <label htmlFor="payment_type_id">Тип платежа</label>
+                <label htmlFor="payment_type_id">{label("payment_type_id")}</label>
                 <select id="payment_type_id" className="select" {...register("payment_type_id")}>
                   <option value="">— не указан —</option>
                   {refs?.payment_types.map((item) => (
@@ -443,7 +445,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <div className="error">{err("payment_type_id")}</div>
               </div>
               <div className={cls("indicator_id")}>
-                <label htmlFor="indicator_id">Индикатор проекта</label>
+                <label htmlFor="indicator_id">{label("indicator_id")}</label>
                 <select id="indicator_id" className="select" {...register("indicator_id")}>
                   <option value="">— не указан —</option>
                   {refs?.project_indicators.map((item) => (
@@ -456,7 +458,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
             <div className="row2">
               <div className={cls("customer_stage_id")}>
-                <label htmlFor="customer_stage_id">Этап по ТЗ</label>
+                <label htmlFor="customer_stage_id">{label("customer_stage_id")}</label>
                 <select
                   id="customer_stage_id"
                   className="select"
@@ -470,7 +472,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <div className="hint">Старая стадия сохранена отдельно для совместимости.</div>
               </div>
               <div className={cls("implementation_year")}>
-                <label htmlFor="implementation_year">Год реализации</label>
+                <label htmlFor="implementation_year">{label("implementation_year")}</label>
                 <input
                   id="implementation_year"
                   className="input"
@@ -484,25 +486,25 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
             <div style={{ display: "grid", gap: 8, padding: "4px 0" }}>
               <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input type="checkbox" {...register("accepted_for_forecast")} />
-                Принимаемый к прогнозу
+                {label("accepted_for_forecast")}
               </label>
               <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input type="checkbox" {...register("subsidiary_implementation")} />
-                Реализация через ДЗО
+                {label("subsidiary_implementation")}
               </label>
               <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input type="checkbox" {...register("management_control")} />
-                Контроль руководства
+                {label("management_control")}
               </label>
               <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input type="checkbox" {...register("is_industry_solution")} />
-                Отраслевое решение
+                {label("is_industry_solution")}
               </label>
             </div>
 
             {values.accepted_for_forecast && (
               <div className={cls("assessment_status_id")}>
-                <label htmlFor="assessment_status_id">Принимаемый к оценке</label>
+                <label htmlFor="assessment_status_id">{label("assessment_status_id")}</label>
                 <select id="assessment_status_id" className="select" {...register("assessment_status_id")}>
                   <option value="">— не указан —</option>
                   {refs?.assessment_statuses.map((item) => (
@@ -518,12 +520,12 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
             {values.is_industry_solution && (
               <div className="row2">
                 <div className={cls("industry_manager")}>
-                  <label htmlFor="industry_manager">Отраслевой менеджер</label>
+                  <label htmlFor="industry_manager">{label("industry_manager")}</label>
                   <input id="industry_manager" className="input" {...register("industry_manager")} />
                   <div className="error">{err("industry_manager")}</div>
                 </div>
                 <div className={cls("industry_project_number")}>
-                  <label htmlFor="industry_project_number">Номер отраслевого проекта</label>
+                  <label htmlFor="industry_project_number">{label("industry_project_number")}</label>
                   <input id="industry_project_number" className="input" {...register("industry_project_number")} />
                   <div className="error">{err("industry_project_number")}</div>
                 </div>
@@ -531,17 +533,17 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
             )}
 
             <div className={cls("project_status")}>
-              <label htmlFor="project_status">Статус проекта</label>
+              <label htmlFor="project_status">{label("project_status")}</label>
               <textarea id="project_status" className="textarea" rows={3} {...register("project_status")} />
               <div className="error">{err("project_status")}</div>
             </div>
             <div className={cls("realized_work")}>
-              <label htmlFor="realized_work">Сделано за период</label>
+              <label htmlFor="realized_work">{label("realized_work")}</label>
               <textarea id="realized_work" className="textarea" rows={3} {...register("realized_work")} />
               <div className="error">{err("realized_work")}</div>
             </div>
             <div className={cls("period_plan")}>
-              <label htmlFor="period_plan">Планы на период</label>
+              <label htmlFor="period_plan">{label("period_plan")}</label>
               <textarea id="period_plan" className="textarea" rows={3} {...register("period_plan")} />
               <div className="error">{err("period_plan")}</div>
             </div>
@@ -550,7 +552,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
           <div className="col">
             <div className="row2">
               <div className={cls("stage")}>
-                <label htmlFor="stage">Стадия системы (совместимость) {req}</label>
+                <label htmlFor="stage">{label("stage")} (совместимость) {req}</label>
                 <select
                   id="stage"
                   className="select"
@@ -565,7 +567,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <div className="error">{err("stage")}</div>
               </div>
               <div className={cls("probability")}>
-                <label htmlFor="probability">Вероятность, % {req}</label>
+                <label htmlFor="probability">{heading("probability")} {req}</label>
                 <input
                   id="probability"
                   className="input"
@@ -581,19 +583,19 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
             <div className="row2">
               <div className={cls("amount")}>
-                <label htmlFor="amount">Сумма контракта, ₽ {req}</label>
+                <label htmlFor="amount">{heading("amount")} {req}</label>
                 <input id="amount" className="input" inputMode="decimal" placeholder="1 500 000" {...register("amount")} />
                 <div className="error">{err("amount")}</div>
               </div>
               <div className={cls("cost")}>
-                <label htmlFor="cost">Себестоимость, ₽</label>
+                <label htmlFor="cost">{heading("cost")}</label>
                 <input id="cost" className="input" inputMode="decimal" placeholder="0" {...register("cost")} />
                 <div className="error">{err("cost")}</div>
               </div>
             </div>
 
             <div className="field">
-              <label>Маржа (рассчитывается автоматически)</label>
+              <label>{label("margin")} (рассчитывается автоматически)</label>
               <input
                 className="input"
                 readOnly
@@ -611,7 +613,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
             </div>
 
             <div className="field">
-              <label htmlFor="created_at">Дата создания</label>
+              <label htmlFor="created_at">{label("created_at")}</label>
               <input
                 id="created_at"
                 className="input"
@@ -622,7 +624,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
             <div className="row2">
               <div className={cls("start_date")}>
-                <label htmlFor="start_date">Дата начала {req}</label>
+                <label htmlFor="start_date">{label("start_date")} {req}</label>
                 <input
                   id="start_date"
                   type="date"
@@ -634,7 +636,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <div className="error">{err("start_date")}</div>
               </div>
               <div className={cls("expected_close_date")}>
-                <label htmlFor="expected_close_date">Плановое закрытие {req}</label>
+                <label htmlFor="expected_close_date">{label("expected_close_date")} {req}</label>
                 <input
                   id="expected_close_date"
                   type="date"
@@ -648,7 +650,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
             {project?.closed_at && (
               <div className="muted" style={{ fontSize: 13 }}>
-                Закрыт {date(project.closed_at)}
+                {label("closed_at")} {date(project.closed_at)}
               </div>
             )}
           </div>
@@ -656,33 +658,33 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       </fieldset>
 
       <fieldset className="fieldset" disabled={readOnly || isSubmitting}>
-        <legend>Помесячная выручка и затраты</legend>
+        <legend>{label("financial_entries")}</legend>
         <p className="hint">Сумма вводится в тыс. ₽. Выберите, включает ли сумма НДС; налог автоматически не пересчитывается.</p>
         {financialEntries.map((entry, index) => {
           const set = (patch: Partial<FinancialEntry>) => setFinancialEntries((items) => items.map((item, i) => i === index ? { ...item, ...patch } : item));
           return <div className="row2" key={entry.id ?? `entry-${index}`} style={{ marginBottom: 10 }}>
             <select className="select" value={entry.kind} onChange={(e) => set({ kind: e.target.value as FinancialEntry["kind"], status_id: undefined, article_id: undefined, cost_type_id: undefined })}>
-              <option value="revenue">Выручка</option><option value="cost">Затраты</option>
+              <option value="revenue">{label("financial_entries.revenue")}</option><option value="cost">{label("financial_entries.cost")}</option>
             </select>
-            <input className="input" type="number" min="1900" max="2200" value={entry.year} aria-label="Год" onChange={(e) => set({ year: Number(e.target.value) })} />
-            <select className="select" value={entry.month} aria-label="Месяц" onChange={(e) => set({ month: Number(e.target.value) })}>
+            <input className="input" type="number" min="1900" max="2200" value={entry.year} aria-label={label("financial_entries.year")} onChange={(e) => set({ year: Number(e.target.value) })} />
+            <select className="select" value={entry.month} aria-label={label("financial_entries.month")} onChange={(e) => set({ month: Number(e.target.value) })}>
               {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Intl.DateTimeFormat("ru", { month: "long" }).format(new Date(2020, i, 1))}</option>)}
             </select>
-            <input className="input" type="number" min="0" step="0.001" value={entry.amount} placeholder="тыс. ₽" aria-label="Сумма, тыс. рублей" onChange={(e) => set({ amount: e.target.value })} />
-            <select className="select" value={entry.vat_included ? "yes" : "no"} aria-label="НДС" onChange={(e) => set({ vat_included: e.target.value === "yes" })}>
+            <input className="input" type="number" min="0" step="0.001" value={entry.amount} placeholder="тыс. ₽" aria-label={heading("financial_entries.amount")} onChange={(e) => set({ amount: e.target.value })} />
+            <select className="select" value={entry.vat_included ? "yes" : "no"} aria-label={label("financial_entries.vat_included")} onChange={(e) => set({ vat_included: e.target.value === "yes" })}>
               <option value="yes">С НДС</option><option value="no">Без НДС</option>
             </select>
-            {entry.kind === "revenue" ? <select className="select" value={entry.status_id ?? ""} aria-label="Статус начисления выручки" onChange={(e) => set({ status_id: Number(e.target.value) })}>
-              <option value="">Статус выручки</option>{refs?.revenue_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            {entry.kind === "revenue" ? <select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.revenue_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
+              <option value="">{label("financial_entries.revenue_status")}</option>{refs?.revenue_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
             </select> : <>
-              <select className="select" value={entry.article_id ?? ""} aria-label="Статья затрат" onChange={(e) => set({ article_id: Number(e.target.value) })}>
-                <option value="">Статья затрат</option>{refs?.cost_articles.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              <select className="select" value={entry.article_id ?? ""} aria-label={label("financial_entries.article_id")} onChange={(e) => set({ article_id: Number(e.target.value) })}>
+                <option value="">{label("financial_entries.article_id")}</option>{refs?.cost_articles.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
-              <select className="select" value={entry.cost_type_id ?? ""} aria-label="Вид затрат" onChange={(e) => set({ cost_type_id: Number(e.target.value) })}>
-                <option value="">Вид затрат</option>{refs?.cost_types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              <select className="select" value={entry.cost_type_id ?? ""} aria-label={label("financial_entries.cost_type_id")} onChange={(e) => set({ cost_type_id: Number(e.target.value) })}>
+                <option value="">{label("financial_entries.cost_type_id")}</option>{refs?.cost_types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
-              <select className="select" value={entry.status_id ?? ""} aria-label="Статус затрат" onChange={(e) => set({ status_id: Number(e.target.value) })}>
-                <option value="">Статус затрат</option>{refs?.cost_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              <select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.cost_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
+                <option value="">{label("financial_entries.cost_status")}</option>{refs?.cost_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
             </>}
             <button type="button" className="btn" onClick={() => setFinancialEntries((items) => items.filter((_, i) => i !== index))}>Удалить</button>

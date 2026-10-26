@@ -160,7 +160,7 @@ async function fillFinancialRow(row: Locator, entry: FinancialWrite) {
   await row.getByRole("combobox").first().selectOption(entry.kind);
   await row.getByLabel("Год", { exact: true }).fill(String(entry.year));
   await row.getByLabel("Месяц", { exact: true }).selectOption(String(entry.month));
-  await row.getByLabel("Сумма, тыс. рублей").fill(entry.amount);
+  await row.getByLabel("Сумма, тыс. ₽").fill(entry.amount);
   await row.getByLabel("НДС", { exact: true }).selectOption(entry.vat_included ? "yes" : "no");
   if (entry.kind === "cost") {
     await row.getByLabel("Статья затрат").selectOption(String(entry.article_id));
@@ -171,13 +171,13 @@ async function fillFinancialRow(row: Locator, entry: FinancialWrite) {
 }
 
 async function expectFinancialRows(page: Page, entries = FINANCIAL_ROWS) {
-  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveCount(entries.length);
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveCount(entries.length);
   for (const [index, entry] of entries.entries()) {
     const row = financialRow(page, index);
     await expect(row.getByRole("combobox").first()).toHaveValue(entry.kind);
     await expect(row.getByLabel("Год", { exact: true })).toHaveValue(String(entry.year));
     await expect(row.getByLabel("Месяц", { exact: true })).toHaveValue(String(entry.month));
-    await expect(row.getByLabel("Сумма, тыс. рублей")).toHaveValue(entry.amount);
+    await expect(row.getByLabel("Сумма, тыс. ₽")).toHaveValue(entry.amount);
     await expect(row.getByLabel("НДС", { exact: true })).toHaveValue(entry.vat_included ? "yes" : "no");
     await expect(row.getByLabel(entry.kind === "revenue" ? "Статус начисления выручки" : "Статус затрат"))
       .toHaveValue(String(entry.status_id));
@@ -349,7 +349,7 @@ test("IF01: задержанный завершающий GET блокирует
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
   await expect(page.getByLabel("Суть проекта")).toBeEnabled();
   await expect(page.getByLabel(/Клиент/)).toBeEnabled();
-  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. рублей")).toBeEnabled();
+  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Добавить финансовую строку", exact: true })).toBeEnabled();
   await expectCard(page, name);
   await expectFinancialRows(page);
