@@ -173,7 +173,8 @@ class ListParams:
     def query(self, user: User) -> Select:
         stmt = _filtered_query(
             user, self.q, self.segment_id, self.service_id, self.manager_id, self.stage, self.open_only,
-            archived=self.archived, customer_stage_id=self.customer_stage_id, implementation_year=self.implementation_year,
+            archived=self.archived, customer_stage_id=self.customer_stage_id,
+            implementation_year=self.implementation_year,
         )
         field = self.sort.lstrip("-")
         column = SORT_FIELDS[field]

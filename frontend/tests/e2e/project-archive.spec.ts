@@ -163,9 +163,9 @@ async function expectProjectValues(page: Page) {
   await expect(page.getByLabel(/^Стадия системы/)).toHaveValue("proposal");
   await expect(page.getByLabel("Реализация через ДЗО")).toBeChecked();
   await expect(page.getByLabel("Контроль руководства")).toBeChecked();
-  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveCount(2);
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveCount(2);
   for (const [index, entry] of project.financial_entries.entries()) {
-    await expect(page.getByLabel("Сумма, тыс. рублей").nth(index)).toHaveValue(entry.amount);
+    await expect(page.getByLabel("Сумма, тыс. ₽").nth(index)).toHaveValue(entry.amount);
     await expect(page.getByLabel("Год", { exact: true }).nth(index)).toHaveValue(String(entry.year));
     await expect(page.getByLabel("Месяц", { exact: true }).nth(index)).toHaveValue(String(entry.month));
     await expect(page.getByLabel("НДС", { exact: true }).nth(index)).toHaveValue(entry.vat_included ? "yes" : "no");
@@ -178,7 +178,7 @@ async function expectProjectValues(page: Page) {
 
 async function expectReadOnly(page: Page, readOnly: boolean) {
   const fields = [page.getByLabel("Суть проекта"), page.getByLabel(/^Клиент/),
-    page.getByLabel(/^Услуга/), page.getByLabel("Сумма, тыс. рублей").first(),
+    page.getByLabel(/^Услуга/), page.getByLabel("Сумма, тыс. ₽").first(),
     page.getByLabel("Статья затрат"), page.getByRole("button", { name: "Добавить финансовую строку" }),
     ...await page.getByRole("button", { name: "Удалить", exact: true }).all()];
   for (const field of fields) {
@@ -225,7 +225,7 @@ test("администратор подтверждает архивирован
   expect(apiState.historyRequests).toBeGreaterThan(beforeRestore);
   expect(apiState.actions).toEqual(["archive", "restore"]);
   await page.getByLabel("Суть проекта").fill("Можно редактировать после восстановления");
-  await page.getByLabel("Сумма, тыс. рублей").first().fill("1234.568");
+  await page.getByLabel("Сумма, тыс. ₽").first().fill("1234.568");
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeEnabled();
 });
 

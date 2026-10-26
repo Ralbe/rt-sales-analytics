@@ -5,13 +5,14 @@ import { createPortal } from "react-dom";
 
 import { SESSION_EXPIRED_EVENT } from "@/lib/api";
 import { useMe, useRefs } from "@/lib/hooks";
+import { useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import type { FinancialEntry, Project, RefItem, Refs } from "@/lib/types";
 
 import "./ProjectPrint.css";
 
 // Единая точка подключения подписей из useProjectFieldLabels при последующей интеграции.
 export const PROJECT_PRINT_LABELS = {
-  id: "Номер проекта", name: "Название проекта", client: "Клиент", segment: "Сегмент",
+  id: "Номер проекта", name: "Название проекта", client: "Клиент", client_inn: "ИНН", segment: "Сегмент",
   manager: "Ответственный", service: "Услуга", service_group: "Группа услуг", description: "Суть проекта",
   payment_type: "Тип платежа", customer_stage: "Этап по ТЗ", stage: "Стадия системы (совместимость)",
   probability: "Вероятность, %", indicator: "Индикатор проекта", implementation_year: "Год реализации",
@@ -26,9 +27,26 @@ export const PROJECT_PRINT_LABELS = {
   financial_period: "Период", financial_amount: "Сумма, тыс. рублей", vat_included: "НДС",
   revenue_status: "Статус начисления выручки", cost_status: "Статус затрат",
   article: "Статья затрат", cost_type: "Вид затрат", financial_id: "Номер строки",
+  revenue_title: "Помесячная выручка", cost_title: "Помесячные затраты", archived_at: "Архивирование",
 } as const;
 
 type Labels = Record<keyof typeof PROJECT_PRINT_LABELS, string>;
+const LABEL_KEYS: Partial<Record<keyof Labels, ProjectFieldKey>> = {
+  id: "id", name: "name", client: "client_id", client_inn: "client_inn", segment: "segment",
+  manager: "manager_id", service: "service_id", service_group: "service_group", description: "description",
+  payment_type: "payment_type_id", customer_stage: "customer_stage_id", stage: "stage", probability: "probability",
+  indicator: "indicator_id", implementation_year: "implementation_year", accepted_for_forecast: "accepted_for_forecast",
+  assessment_status: "assessment_status_id", subsidiary_implementation: "subsidiary_implementation",
+  management_control: "management_control", is_industry_solution: "is_industry_solution", industry_manager: "industry_manager",
+  industry_project_number: "industry_project_number", project_status: "project_status", realized_work: "realized_work",
+  period_plan: "period_plan", amount: "amount", cost: "cost", margin: "margin", margin_pct: "margin_pct",
+  start_date: "start_date", expected_close_date: "expected_close_date", closed_at: "closed_at",
+  created_at: "created_at", updated_at: "updated_at", archived_at: "archived_at",
+  financial_amount: "financial_entries.amount", vat_included: "financial_entries.vat_included",
+  revenue_status: "financial_entries.revenue_status", cost_status: "financial_entries.cost_status",
+  article: "financial_entries.article_id", cost_type: "financial_entries.cost_type_id",
+  revenue_title: "financial_entries.revenue", cost_title: "financial_entries.cost",
+};
 type TextField = { [K in keyof Project]: Project[K] extends string | number | null ? K : never }[keyof Project] & keyof Labels;
 type Row = Readonly<{ key: keyof Labels; label: string; value: string }>;
 type FinancialRow = Readonly<{ period: string; amount: string; vat: string; status: string; article: string; costType: string; details: readonly Row[] }>;
@@ -84,7 +102,8 @@ function makeSnapshot(project: Project, refs: Refs, labels: Labels): Snapshot {
     labels: { ...labels },
     sections: [
       { title: "Данные проекта", rows: [
-        ...rows(["id", "name"]), row("client", project.client.name), row("segment", project.segment.name),
+        ...rows(["id", "name"]), row("client", project.client.name), row("client_inn", text(project.client_inn)),
+        row("segment", project.segment.name),
         row("manager", project.manager.full_name), row("service", project.service.name), row("service_group", text(project.service.group_name)),
         row("payment_type", text(project.payment_type?.name)), row("description", text(project.description)),
       ] },
@@ -96,7 +115,10 @@ function makeSnapshot(project: Project, refs: Refs, labels: Labels): Snapshot {
         row("subsidiary_implementation", flag(project.subsidiary_implementation)), row("management_control", flag(project.management_control)),
         row("is_industry_solution", flag(project.is_industry_solution)), ...rows(["industry_manager", "industry_project_number"]),
       ] },
-      { title: "Даты проекта", rows: (["start_date", "expected_close_date", "closed_at", "created_at", "updated_at"] as const).map((key) => row(key, date(project[key]))) },
+      { title: "Даты проекта", rows: [
+        ...(["start_date", "expected_close_date", "closed_at", "created_at", "updated_at"] as const).map((key) => row(key, date(project[key]))),
+        ...(project.archived_at ? [row("archived_at", date(project.archived_at))] : []),
+      ] },
       { title: "Суммы карточки в рублях (₽)", rows: rows(["amount", "cost", "margin", "margin_pct"]) },
       { title: "Дополнительная информация", rows: rows(["project_status", "realized_work", "period_plan"]) },
     ],
@@ -112,6 +134,7 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
   labels?: Partial<Labels>;
 }) {
   const refs = useRefs();
+  const configuredLabels = useProjectFieldLabels();
   const me = useMe();
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -183,7 +206,12 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
     if (blocked || revoked.current || running.current || !project || !refs.data) return;
     running.current = true;
     setError(null);
-    setSnapshot(makeSnapshot(project, refs.data, { ...PROJECT_PRINT_LABELS, ...overrides }));
+    const labels: Labels = { ...PROJECT_PRINT_LABELS };
+    for (const [printKey, fieldKey] of Object.entries(LABEL_KEYS) as [keyof Labels, ProjectFieldKey][]) {
+      labels[printKey] = ["created_at", "updated_at"].includes(fieldKey)
+        ? configuredLabels.label(fieldKey) : configuredLabels.heading(fieldKey);
+    }
+    setSnapshot(makeSnapshot(project, refs.data, { ...labels, ...overrides }));
     setPhase("preparing");
   };
   const current = invalid ? null : snapshot;
@@ -213,8 +241,8 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
               <dl>{section.rows.map((item) => <div key={item.key} data-project-field={item.key}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>
             </section>)}
             <p>Суммы карточки указаны в ₽; помесячные суммы — в тыс. рублей. Значения сохранены без конвертации и округления.</p>
-            <FinancialTable title="Помесячная выручка" kind="revenue" rows={current.revenue} labels={current.labels} />
-            <FinancialTable title="Помесячные затраты" kind="cost" rows={current.costs} labels={current.labels} />
+            <FinancialTable title={current.labels.revenue_title} kind="revenue" rows={current.revenue} labels={current.labels} />
+            <FinancialTable title={current.labels.cost_title} kind="cost" rows={current.costs} labels={current.labels} />
           </>}
         </section>, target,
       )}

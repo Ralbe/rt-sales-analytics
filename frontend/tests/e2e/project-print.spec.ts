@@ -145,7 +145,7 @@ test("AT-103: снимок содержит сохранённые поля, т�
   await page.getByLabel("Суть проекта").fill("НЕСОХРАНЁННАЯ СУТЬ");
   await page.getByLabel("Планы на период").fill("НЕСОХРАНЁННЫЙ ПЛАН");
   await page.getByLabel(/Сумма контракта/).fill("111.11");
-  await page.getByLabel("Сумма, тыс. рублей").first().fill("2.222");
+  await page.getByLabel("Сумма, тыс. ₽").first().fill("2.222");
   await expect(page.locator("#project-print-hint")).toContainText("Печатаются только сохранённые данные");
   await expect.poll(() => state.requests.includes("GET /projects/check-name")).toBe(true);
   // Любая сеть после подготовки страницы делает проверку печати красной, включая внешние сервисы.
@@ -188,7 +188,7 @@ test("AT-103: снимок содержит сохранённые поля, т�
   expect(state.unexpected).toEqual([]);
   await closePrint(page);
   await expect(page.getByLabel("Суть проекта")).toHaveValue("НЕСОХРАНЁННАЯ СУТЬ");
-  await expect(page.getByLabel("Сумма, тыс. рублей").first()).toHaveValue("2.222");
+  await expect(page.getByLabel("Сумма, тыс. ₽").first()).toHaveValue("2.222");
 });
 
 test("снимок неизменен при обновлении проекта и справочников; повторная печать берёт новый снимок", async ({ page }) => {
@@ -234,7 +234,7 @@ test("многостраничная A4 карточка сохраняет дл
   await expect(printed).toContainText("КОНЕЦ ПЛАНОВ");
   await expect(printed).toContainText("Статус строки 80:");
   await expect(printed).toContainText("Дата создания: 01.01.2026, 03:30:15");
-  await expect(printed).toContainText("Дата обновления: 26.10.2026, 01:30:45");
+  await expect(printed).toContainText("Дата изменения: 26.10.2026, 01:30:45");
   await expect(printed.locator("img, script, input, select, textarea, button")).toHaveCount(0);
   expect(await page.evaluate(() => (window as typeof window & { printXss?: boolean }).printXss)).toBeUndefined();
   const clipping = await printed.evaluate((root) => {

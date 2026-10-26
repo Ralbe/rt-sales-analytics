@@ -166,7 +166,7 @@ async function fillFinancialRow(row: Locator, entry: FinancialWrite) {
   await row.getByRole("combobox").first().selectOption(entry.kind);
   await row.getByLabel("Год", { exact: true }).fill(String(entry.year));
   await row.getByLabel("Месяц", { exact: true }).selectOption(String(entry.month));
-  await row.getByLabel("Сумма, тыс. рублей").fill(entry.amount);
+  await row.getByLabel("Сумма, тыс. ₽").fill(entry.amount);
   await row.getByLabel("НДС", { exact: true }).selectOption(entry.vat_included ? "yes" : "no");
   if (entry.kind === "cost") {
     await row.getByLabel("Статья затрат").selectOption(String(entry.article_id));
@@ -177,13 +177,13 @@ async function fillFinancialRow(row: Locator, entry: FinancialWrite) {
 }
 
 async function expectFinancialRows(page: Page, entries = FINANCIAL_ROWS) {
-  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveCount(entries.length);
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveCount(entries.length);
   for (const [index, entry] of entries.entries()) {
     const row = financialRow(page, index);
     await expect(row.getByRole("combobox").first()).toHaveValue(entry.kind);
     await expect(row.getByLabel("Год", { exact: true })).toHaveValue(String(entry.year));
     await expect(row.getByLabel("Месяц", { exact: true })).toHaveValue(String(entry.month));
-    await expect(row.getByLabel("Сумма, тыс. рублей")).toHaveValue(entry.amount);
+    await expect(row.getByLabel("Сумма, тыс. ₽")).toHaveValue(entry.amount);
     await expect(row.getByLabel("НДС", { exact: true })).toHaveValue(entry.vat_included ? "yes" : "no");
     await expect(row.getByLabel(entry.kind === "revenue" ? "Статус начисления выручки" : "Статус затрат"))
       .toHaveValue(String(entry.status_id));
@@ -377,7 +377,7 @@ for (const editing of [false, true]) {
     await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
     await expect(page.getByLabel("Суть проекта")).toBeEnabled();
     await expect(page.getByLabel(/Клиент/)).toBeEnabled();
-    await expect(financialRow(page, 0).getByLabel("Сумма, тыс. рублей")).toBeEnabled();
+    await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toBeEnabled();
     await expect(page.getByRole("button", { name: "Добавить финансовую строку", exact: true })).toBeEnabled();
     await expectCard(page, name);
     await expectFinancialRows(page);
@@ -416,7 +416,7 @@ test("после rollback возврат всего ввода к baseline не 
 test("удаление всех финансов отправляет [] вместе с карточкой и подтверждается без GET", async ({ page }) => {
   const state = await mockApi(page, true, { saveFailures: 0 });
   await page.goto("/projects/" + PROJECT.id);
-  await expect(page.getByLabel("Сумма, тыс. рублей")).toHaveCount(2);
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveCount(2);
   await page.getByRole("group", { name: "Помесячная выручка и затраты" }).getByRole("button", { name: "Удалить", exact: true }).first().click();
   await page.getByRole("group", { name: "Помесячная выручка и затраты" }).getByRole("button", { name: "Удалить", exact: true }).click();
   await page.getByLabel("Суть проекта").fill("Финансовые строки очищены");
@@ -436,12 +436,12 @@ test("удаление всех финансов отправляет [] вме�
 test("canonical response нормализует финансовый baseline без обязательного refetch", async ({ page }) => {
   const state = await mockApi(page, true, { saveFailures: 0 });
   await page.goto("/projects/" + PROJECT.id);
-  await financialRow(page, 0).getByLabel("Сумма, тыс. рублей").fill("1234.5");
+  await financialRow(page, 0).getByLabel("Сумма, тыс. ₽").fill("1234.5");
   // Любой последующий GET не сможет подтвердить сохранение.
   state.failReads = true;
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
   await expect(page.getByText(/Сохранено в/)).toBeVisible();
-  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. рублей")).toHaveValue("1234.500");
+  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toHaveValue("1234.500");
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
   await expect(saveMessage(page)).toHaveCount(0);
   expect(state.updates[0].financial_entries[0].amount).toBe("1234.5");
