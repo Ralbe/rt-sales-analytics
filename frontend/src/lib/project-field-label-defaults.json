@@ -1,0 +1,194 @@
+{
+  "id": {
+    "label": "ID",
+    "suffix": ""
+  },
+  "name": {
+    "label": "Название проекта",
+    "suffix": ""
+  },
+  "description": {
+    "label": "Суть проекта",
+    "suffix": ""
+  },
+  "client_id": {
+    "label": "Клиент",
+    "suffix": ""
+  },
+  "client_inn": {
+    "label": "ИНН",
+    "suffix": ""
+  },
+  "segment": {
+    "label": "Сегмент",
+    "suffix": ""
+  },
+  "manager_id": {
+    "label": "Ответственный",
+    "suffix": ""
+  },
+  "service_id": {
+    "label": "Услуга",
+    "suffix": ""
+  },
+  "service_group": {
+    "label": "Группа услуг",
+    "suffix": ""
+  },
+  "stage": {
+    "label": "Стадия системы",
+    "suffix": ""
+  },
+  "amount": {
+    "label": "Сумма контракта",
+    "suffix": ", ₽"
+  },
+  "cost": {
+    "label": "Себестоимость",
+    "suffix": ", ₽"
+  },
+  "margin": {
+    "label": "Маржа",
+    "suffix": ", ₽"
+  },
+  "margin_pct": {
+    "label": "Маржа",
+    "suffix": ", %"
+  },
+  "probability": {
+    "label": "Вероятность",
+    "suffix": ", %"
+  },
+  "start_date": {
+    "label": "Дата начала",
+    "suffix": ""
+  },
+  "expected_close_date": {
+    "label": "Плановое закрытие",
+    "suffix": ""
+  },
+  "closed_at": {
+    "label": "Дата закрытия",
+    "suffix": ""
+  },
+  "payment_type_id": {
+    "label": "Тип платежа",
+    "suffix": ""
+  },
+  "customer_stage_id": {
+    "label": "Этап по ТЗ",
+    "suffix": ""
+  },
+  "indicator_id": {
+    "label": "Индикатор проекта",
+    "suffix": ""
+  },
+  "accepted_for_forecast": {
+    "label": "Принимаемый к прогнозу",
+    "suffix": ""
+  },
+  "assessment_status_id": {
+    "label": "Принимаемый к оценке",
+    "suffix": ""
+  },
+  "subsidiary_implementation": {
+    "label": "Реализация через ДЗО",
+    "suffix": ""
+  },
+  "management_control": {
+    "label": "Контроль руководства",
+    "suffix": ""
+  },
+  "is_industry_solution": {
+    "label": "Отраслевое решение",
+    "suffix": ""
+  },
+  "industry_manager": {
+    "label": "Отраслевой менеджер",
+    "suffix": ""
+  },
+  "industry_project_number": {
+    "label": "Номер отраслевого проекта",
+    "suffix": ""
+  },
+  "implementation_year": {
+    "label": "Год реализации",
+    "suffix": ""
+  },
+  "project_status": {
+    "label": "Статус проекта",
+    "suffix": ""
+  },
+  "realized_work": {
+    "label": "Сделано за период",
+    "suffix": ""
+  },
+  "period_plan": {
+    "label": "Планы на период",
+    "suffix": ""
+  },
+  "created_at": {
+    "label": "Дата создания",
+    "suffix": " (UTC)"
+  },
+  "updated_at": {
+    "label": "Дата изменения",
+    "suffix": " (UTC)"
+  },
+  "archived_at": {
+    "label": "Архивирование",
+    "suffix": ""
+  },
+  "financial_entries": {
+    "label": "Помесячная выручка и затраты",
+    "suffix": ""
+  },
+  "financial_entries.kind": {
+    "label": "Тип финансовой строки",
+    "suffix": ""
+  },
+  "financial_entries.revenue": {
+    "label": "Выручка",
+    "suffix": ""
+  },
+  "financial_entries.cost": {
+    "label": "Затраты",
+    "suffix": ""
+  },
+  "financial_entries.year": {
+    "label": "Год",
+    "suffix": ""
+  },
+  "financial_entries.month": {
+    "label": "Месяц",
+    "suffix": ""
+  },
+  "financial_entries.amount": {
+    "label": "Сумма",
+    "suffix": ", тыс. ₽"
+  },
+  "financial_entries.vat_included": {
+    "label": "НДС",
+    "suffix": ""
+  },
+  "financial_entries.status_id": {
+    "label": "Статус",
+    "suffix": ""
+  },
+  "financial_entries.revenue_status": {
+    "label": "Статус начисления выручки",
+    "suffix": ""
+  },
+  "financial_entries.cost_status": {
+    "label": "Статус затрат",
+    "suffix": ""
+  },
+  "financial_entries.article_id": {
+    "label": "Статья затрат",
+    "suffix": ""
+  },
+  "financial_entries.cost_type_id": {
+    "label": "Вид затрат",
+    "suffix": ""
+  }
+}

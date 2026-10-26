@@ -36,6 +36,7 @@ export interface Refs {
   revenue_statuses: RefItem[];
   cost_statuses: RefItem[];
   roles: { id: Role; name: string }[];
+  project_field_labels?: Record<string, string>;
 }
 
 export interface ClientItem {

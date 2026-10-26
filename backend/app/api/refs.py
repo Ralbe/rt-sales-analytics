@@ -6,6 +6,7 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import ROLE_LABELS, STAGE_DEFAULT_PROBABILITY, STAGE_LABELS, ReferenceValue, Segment, Service, User
 from app.schemas import RefsOut
+from app.services.project_field_labels import with_project_field_labels
 
 router = APIRouter(prefix="/refs", tags=["refs"])
 
@@ -20,7 +21,7 @@ def refs(db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> 
     for value in reference_values:
         by_category.setdefault(value.category, []).append(value)
 
-    return {
+    return with_project_field_labels(db, {
         "segments": db.scalars(select(Segment).order_by(Segment.name)).all(),
         "services": db.scalars(select(Service).order_by(Service.group_name, Service.name)).all(),
         "managers": db.scalars(
@@ -39,4 +40,4 @@ def refs(db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> 
         "revenue_statuses": by_category.get("revenue_status", []),
         "cost_statuses": by_category.get("cost_status", []),
         "roles": [{"id": r.value, "name": label} for r, label in ROLE_LABELS.items()],
-    }
+    })
