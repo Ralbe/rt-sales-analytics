@@ -41,7 +41,7 @@ def test_auth_version_migration_preserves_users_defaults_and_is_reversible(tmp_p
             assert connection.execute(text("SELECT email FROM users ORDER BY id")).scalars().all() == [
                 "existing@example.test", "new@example.test",
             ]
-        command.upgrade(config, "0005")
+        command.upgrade(config, "head")
         command.check(config)
     finally:
         engine.dispose()

@@ -17,6 +17,8 @@ import type { FinancialEntry, Project, Stage } from "@/lib/types";
 
 const DRAFT_KEY = "project-draft";
 const STAGES = ["lead", "qualification", "proposal", "negotiation", "won", "lost"] as const;
+// Как Pydantic и PostgreSQL, считаем символы Unicode, а не кодовые единицы UTF-16.
+const projectText = z.string().refine((v) => Array.from(v).length <= 1000, "Не длиннее 1000 символов");
 
 const toNumber = (v: string) => Number(v.replace(/\s/g, "").replace(",", "."));
 const isNumber = (v: string) => v.trim() !== "" && Number.isFinite(toNumber(v));
@@ -55,9 +57,9 @@ const schema = z
         (v) => v === "" || (/^\d{4}$/.test(v) && Number(v) >= 1900 && Number(v) <= 2200),
         "Введите год от 1900 до 2200",
       ),
-    project_status: z.string().max(100, "Не длиннее 100 символов"),
-    realized_work: z.string().max(5000, "Не длиннее 5000 символов"),
-    period_plan: z.string().max(5000, "Не длиннее 5000 символов"),
+    project_status: projectText,
+    realized_work: projectText,
+    period_plan: projectText,
     probability: z
       .string()
       .refine((v) => /^\d{1,3}$/.test(v.trim()) && Number(v) <= 100, "Целое число от 0 до 100"),
@@ -275,7 +277,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
       industry_manager: v.is_industry_solution ? v.industry_manager.trim() || null : null,
       industry_project_number: v.is_industry_solution ? v.industry_project_number.trim() || null : null,
       implementation_year: v.implementation_year ? Number(v.implementation_year) : null,
-      project_status: v.project_status.trim() || null,
+      project_status: v.project_status || null,
       realized_work: v.realized_work,
       period_plan: v.period_plan,
     };
@@ -530,7 +532,7 @@ function ProjectFormInner({ project }: { project?: Project }) {
 
             <div className={cls("project_status")}>
               <label htmlFor="project_status">Статус проекта</label>
-              <input id="project_status" className="input" {...register("project_status")} />
+              <textarea id="project_status" className="textarea" rows={3} {...register("project_status")} />
               <div className="error">{err("project_status")}</div>
             </div>
             <div className={cls("realized_work")}>
@@ -606,6 +608,16 @@ function ProjectFormInner({ project }: { project?: Project }) {
               <div className="hint" style={{ color: margin !== null && margin < 0 ? "var(--warn)" : undefined }}>
                 {margin !== null && margin < 0 ? "Себестоимость выше суммы контракта" : ""}
               </div>
+            </div>
+
+            <div className="field">
+              <label htmlFor="created_at">Дата создания</label>
+              <input
+                id="created_at"
+                className="input"
+                readOnly
+                value={project ? date(project.created_at) : "Будет назначена при создании"}
+              />
             </div>
 
             <div className="row2">

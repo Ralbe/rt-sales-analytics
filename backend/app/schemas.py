@@ -147,9 +147,9 @@ class ProjectIn(BaseModel):
     industry_manager: str | None = Field(default=None, max_length=200)
     industry_project_number: str | None = Field(default=None, max_length=100)
     implementation_year: int | None = Field(default=None, ge=1900, le=2200)
-    project_status: str | None = Field(default=None, max_length=100)
-    realized_work: str = Field(default="", max_length=5000)
-    period_plan: str = Field(default="", max_length=5000)
+    project_status: str | None = Field(default=None, max_length=1000)
+    realized_work: str = Field(default="", max_length=1000)
+    period_plan: str = Field(default="", max_length=1000)
 
     @field_validator("name")
     @classmethod

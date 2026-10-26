@@ -154,7 +154,7 @@ class Project(Base):
     industry_manager: Mapped[str | None] = mapped_column(String(200))
     industry_project_number: Mapped[str | None] = mapped_column(String(100))
     implementation_year: Mapped[int | None] = mapped_column(Integer)
-    project_status: Mapped[str | None] = mapped_column(String(100))
+    project_status: Mapped[str | None] = mapped_column(String(1000))
     realized_work: Mapped[str] = mapped_column(Text, default="", server_default="")
     period_plan: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
