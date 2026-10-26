@@ -27,6 +27,7 @@ from app.models import (
     Stage,
     User,
 )
+from app.project_write_schemas import ProjectSaveIn
 from app.schemas import (
     NameCheckOut,
     ProjectFinancialEntryIn,
@@ -349,13 +350,14 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
             status.HTTP_409_CONFLICT, {"field": "name", "message": "У этого клиента уже есть проект с таким названием"}
         )
 
-    was_closed = project.stage in CLOSED_STAGES if project.stage else False
-    for field, value in data.model_dump(exclude={"manager_id"}).items():
-        setattr(project, field, value)
     customer_stage = references.get("customer_stage_id")
+    if customer_stage is not None and customer_stage.probability is None:
+        raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
+
+    was_closed = project.stage in CLOSED_STAGES if project.stage else False
+    for field, value in data.model_dump(exclude={"manager_id", "financial_entries"}).items():
+        setattr(project, field, value)
     if customer_stage is not None:
-        if customer_stage.probability is None:
-            raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
         project.probability = customer_stage.probability
     project.manager_id = manager_id
     if data.stage in CLOSED_STAGES:
@@ -367,19 +369,26 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
 
 @router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
 def create_project(
-    data: ProjectIn,
+    data: ProjectSaveIn,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
     project = Project(cost=Decimal("0"))
-    _apply(db, project, data, user)
-    db.add(project)
-    db.flush()
-    audit.record(
-        db, user.id, "create", "project", project.id,
-        name=project.name, after=project_snapshot(db, project), author_name=user.full_name,
-    )
-    db.commit()
+    try:
+        references = _validate_financial_entries(db, data.financial_entries or [])
+        _apply(db, project, data, user)
+        db.add(project)
+        db.flush()
+        audit.record(
+            db, user.id, "create", "project", project.id,
+            name=project.name, after=project_snapshot(db, project), author_name=user.full_name,
+        )
+        if data.financial_entries is not None:
+            _replace_financial_entries(db, project, data.financial_entries, references, user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     cache.bump("analytics")
     db.refresh(project)
     return to_out(project)
@@ -388,35 +397,41 @@ def create_project(
 @router.put("/{project_id}", response_model=ProjectOut)
 def update_project(
     project_id: int,
-    data: ProjectIn,
+    data: ProjectSaveIn,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
     project = _get_visible(db, project_id, user)
-    before = project_snapshot(db, project)
-    _apply(db, project, data, user)
-    after = project_snapshot(db, project)
-    if {key: value for key, value in before.items() if key != "_labels"} != {
-        key: value for key, value in after.items() if key != "_labels"
-    }:
-        audit.record(
-            db, user.id, "update", "project", project.id,
-            before=before, after=after, author_name=user.full_name,
-        )
-    db.commit()
-    cache.bump("analytics")
+    try:
+        references = _validate_financial_entries(db, data.financial_entries or [])
+        before = project_snapshot(db, project)
+        _apply(db, project, data, user)
+        after = project_snapshot(db, project)
+        changed = {key: value for key, value in before.items() if key != "_labels"} != {
+            key: value for key, value in after.items() if key != "_labels"
+        }
+        if changed:
+            audit.record(
+                db, user.id, "update", "project", project.id,
+                before=before, after=after, author_name=user.full_name,
+            )
+        if data.financial_entries is not None:
+            finances_changed = _replace_financial_entries(db, project, data.financial_entries, references, user)
+            changed = changed or finances_changed
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    if changed:
+        cache.bump("analytics")
     db.refresh(project)
     return to_out(project)
 
 
-@router.put("/{project_id}/financial-entries", response_model=list[ProjectFinancialEntryOut])
-def replace_financial_entries(
-    project_id: int,
+def _validate_financial_entries(
+    db: Session,
     entries: list[ProjectFinancialEntryIn],
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles(*PROJECT_EDITORS)),
-) -> list[ProjectFinancialEntry]:
-    project = _get_visible(db, project_id, user)
+) -> list[dict[str, ReferenceValue]]:
     if len(entries) > 500:
         raise HTTPException(422, "Не более 500 финансовых строк на проект")
     category_fields = {
@@ -425,6 +440,10 @@ def replace_financial_entries(
     }
     references = []
     for entry in entries:
+        if entry.kind == "revenue":
+            for field in ("article_id", "cost_type_id"):
+                if getattr(entry, field) is not None:
+                    raise HTTPException(422, {"field": field, "message": "Поле допустимо только для затрат"})
         row_refs = {}
         for field, category in category_fields[entry.kind].items():
             ref_id = getattr(entry, field)
@@ -439,10 +458,21 @@ def replace_financial_entries(
                 raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
             row_refs[field] = ref
         references.append(row_refs)
+    return references
+
+
+def _replace_financial_entries(
+    db: Session,
+    project: Project,
+    entries: list[ProjectFinancialEntryIn],
+    references: list[dict[str, ReferenceValue]],
+    user: User,
+) -> bool:
+    # Проверка справочников завершена до изменения карточки и финансов; коммит выполняет маршрут.
     before = [financial_snapshot(row) for row in project.financial_entries]
     after = [financial_snapshot(entry, ref) for entry, ref in zip(entries, references, strict=True)]
     if same_finances(before, after):
-        return project.financial_entries
+        return False
     project.financial_entries.clear()
     db.flush()
     project.financial_entries.extend(
@@ -469,6 +499,26 @@ def replace_financial_entries(
         after=after,
         author_name=user.full_name,
     )
-    db.commit()
+    return True
+
+
+@router.put("/{project_id}/financial-entries", response_model=list[ProjectFinancialEntryOut])
+def replace_financial_entries(
+    project_id: int,
+    entries: list[ProjectFinancialEntryIn],
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*PROJECT_EDITORS)),
+) -> list[ProjectFinancialEntry]:
+    project = _get_visible(db, project_id, user)
+    try:
+        references = _validate_financial_entries(db, entries)
+        changed = _replace_financial_entries(db, project, entries, references, user)
+        if not changed:
+            return project.financial_entries
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    cache.bump("analytics")
     db.refresh(project)
     return project.financial_entries
