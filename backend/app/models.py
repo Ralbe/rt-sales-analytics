@@ -237,6 +237,41 @@ class Dashboard(Base):
     owner: Mapped[User] = relationship(lazy="joined")
 
 
+class ReportDefinition(Base):
+    __tablename__ = "report_definitions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    definition: Mapped[dict] = mapped_column(JSON)
+    published: Mapped[bool] = mapped_column(Boolean, default=False, server_default=func.false())
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ReportSnapshot(Base):
+    __tablename__ = "report_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    owner_role: Mapped[str] = mapped_column(String(20))
+    report_id: Mapped[int | None] = mapped_column(ForeignKey("report_definitions.id", ondelete="CASCADE"))
+    report_version: Mapped[int | None] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(200))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    columns: Mapped[list] = mapped_column(JSON)
+    rows: Mapped[list] = mapped_column(JSON)
+    project_ids: Mapped[list] = mapped_column(JSON)
+
+
+class ReportSnapshotQuota(Base):
+    __tablename__ = "report_snapshot_quota"
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

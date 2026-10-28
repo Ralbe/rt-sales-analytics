@@ -61,11 +61,10 @@ export function Sidebar({ user }: { user: User }) {
       <Link href="/reports/gallery" className={active("/reports/gallery")}>
         Готовые отчёты
       </Link>
-      {(user.role === "analyst" || user.role === "admin") && (
-        <Link href="/reports/new" className={active("/reports/new")}>
-          + Конструктор отчётов
-        </Link>
-      )}
+      {canConfigureDashboards(user.role) && <>
+        <Link href="/reports" className={active("/reports")}>Доступные отчёты</Link>
+        <Link href="/reports/new" className={active("/reports/new")}>+ Конструктор отчётов</Link>
+      </>}
 
       <div className="section">Проекты</div>
       <Link href="/projects" className={active("/projects")}>
