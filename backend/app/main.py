@@ -13,10 +13,12 @@ from app.api import (
     projects,
     reference_admin,
     refs,
+    reports,
     structural_references,
     users,
 )
 from app.core.config import settings
+from app.report_request_limit import ReportRequestLimit
 from app.telemetry import configure_tracing
 
 logger = logging.getLogger(__name__)
@@ -48,10 +50,19 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+app.add_middleware(ReportRequestLimit)
+
+
+@app.middleware("http")
+async def report_snapshot_cache_control(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/report-snapshots"):
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 for module in (
     auth, refs, clients, projects, analytics, dashboards, users, project_field_labels,
-    reference_admin, structural_references,
+    reference_admin, structural_references, reports,
 ):
     app.include_router(module.router, prefix="/api")
 

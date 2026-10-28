@@ -57,6 +57,11 @@ export function Sidebar({ user }: { user: User }) {
         </Link>
       ))}
 
+      {canConfigureDashboards(user.role) && <>
+        <div className="section">Отчёты</div>
+        <Link href="/reports" className={active("/reports")}>Доступные отчёты</Link>
+      </>}
+
       <div className="section">Проекты</div>
       <Link href="/projects" className={active("/projects")}>
         Список проектов
