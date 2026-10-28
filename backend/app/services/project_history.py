@@ -187,11 +187,37 @@ class HistoryFormatter:
         before, after = payload.get("before"), payload.get("after")
         old = [row for row in before if isinstance(row, dict)] if isinstance(before, list) else []
         new = [row for row in after if isinstance(row, dict)] if isinstance(after, list) else []
-        remaining_new = Counter(map(financial_key, new))
-        remaining_old = Counter(map(financial_key, old))
+        has_row_ids = isinstance(before, list) and isinstance(after, list) and all(
+            type(row.get("_row_id")) is int for row in old + new
+        )
+        if has_row_ids:
+            has_row_ids = len({row["_row_id"] for row in old}) == len(old) and len(
+                {row["_row_id"] for row in new}
+            ) == len(new)
+
         changes = []
-        for row in old:
+        if has_row_ids:
+            by_id = {row["_row_id"]: row for row in new}
+            changed_ids = set()
+            for row in old:
+                current = by_id.get(row["_row_id"])
+                if current is not None and financial_key(row) != financial_key(current):
+                    changed_ids.add(row["_row_id"])
+                    changes.append(ProjectHistoryChange(
+                        field="financial_entries", label="Финансовая строка изменена",
+                        before=self.financial_row(row), after=self.financial_row(current),
+                    ))
+            old = [row for row in old if row["_row_id"] not in changed_ids]
+            new = [row for row in new if row["_row_id"] not in changed_ids]
+
+        def key_for(row):
             key = financial_key(row)
+            return (row["_row_id"], key) if has_row_ids else key
+
+        remaining_new = Counter(map(key_for, new))
+        remaining_old = Counter(map(key_for, old))
+        for row in old:
+            key = key_for(row)
             if remaining_new[key]:
                 remaining_new[key] -= 1
             else:
@@ -206,7 +232,7 @@ class HistoryFormatter:
                     )
                 )
         for row in new:
-            key = financial_key(row)
+            key = key_for(row)
             if remaining_old[key]:
                 remaining_old[key] -= 1
             else:

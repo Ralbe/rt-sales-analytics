@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { date } from "@/lib/format";
 import { useMe, useRefs } from "@/lib/hooks";
 import { resolveProjectFieldLabels } from "@/lib/project-field-labels";
+import { segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
 import type { BreakdownResponse, DashboardFilters, KpiResponse, ProjectPage, Refs, TrendResponse, User, Widget, WidgetType } from "@/lib/types";
 
 import { widgetQueryKey } from "./widget-data";
@@ -38,8 +39,8 @@ function filterLabels(filters: DashboardFilters, refs: Refs) {
     ? ids.map((id) => options.find((item) => item.id === id)?.name ?? `Недоступное значение (ID ${id})`).join(", ")
     : "Все";
   return [
-    { label: "Сегменты", value: names(filters.segment_ids, refs.segments) },
-    { label: "Услуги", value: names(filters.service_ids, refs.services) },
+    { label: "Сегменты", value: names(filters.segment_ids, segmentFilterOptions(refs)) },
+    { label: "Услуги", value: names(filters.service_ids, serviceFilterOptions(refs)) },
     { label: "Менеджеры", value: names(filters.manager_ids, refs.managers.map((item) => ({ id: item.id, name: item.full_name }))) },
   ];
 }

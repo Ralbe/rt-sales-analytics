@@ -32,7 +32,11 @@ def create_client(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> Client:
-    if db.get(Segment, data.segment_id) is None:
+    segment = db.scalar(
+        select(Segment).where(Segment.id == data.segment_id).with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if segment is None or not segment.is_active:
         raise HTTPException(422, {"field": "segment_id", "message": "Сегмент не найден"})
     existing = db.scalar(select(Client).where(Client.inn == data.inn))
     if existing:
@@ -42,7 +46,8 @@ def create_client(
     client = Client(**data.model_dump())
     db.add(client)
     db.flush()
-    audit.record(db, user.id, "create", "client", client.id, name=client.name)
+    audit.record(db, user.id, "create", "client", client.id, name=client.name,
+                 segment={"id": segment.id, "name": segment.name})
     db.commit()
     db.refresh(client)
     return client

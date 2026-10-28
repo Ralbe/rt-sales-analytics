@@ -73,8 +73,12 @@ export function Sidebar({ user }: { user: User }) {
           <Link href="/users" className={active("/users")}>
             Пользователи
           </Link>
+          <Link href="/settings/references" className={active("/settings/references")}>Справочники</Link>
           <Link href="/settings/project-fields" className={active("/settings/project-fields")}>
             Подписи полей проекта
+          </Link>
+          <Link href="/settings/structural-references" className={active("/settings/structural-references")}>
+            Сегменты и услуги
           </Link>
         </>
       )}

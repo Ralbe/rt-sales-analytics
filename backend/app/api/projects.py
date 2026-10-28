@@ -398,7 +398,9 @@ def _check_integrity_conflict(db: Session, data: ProjectIn, project_id: int | No
         ) from None
 
 
-def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
+def _apply(
+    db: Session, project: Project, data: ProjectIn, user: User, locked_refs: dict[int, ReferenceValue],
+) -> None:
     customer = project.stage_scheme == "customer"
     stage_changed = customer and (project.id is None or data.customer_stage_id != project.customer_stage_id)
     if customer:
@@ -419,7 +421,12 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
             raise HTTPException(422, {"field": "probability", "message": "Укажите вероятность проекта"})
     if db.get(Client, data.client_id) is None:
         raise HTTPException(422, {"field": "client_id", "message": "Клиент не найден"})
-    if db.get(Service, data.service_id) is None:
+    service = db.scalar(
+        select(Service).where(Service.id == data.service_id).with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    retained_service = project.id is not None and data.service_id == project.service_id
+    if service is None or (not service.is_active and not retained_service):
         raise HTTPException(422, {"field": "service_id", "message": "Услуга не найдена"})
 
     expected_categories = {
@@ -435,9 +442,9 @@ def _apply(db: Session, project: Project, data: ProjectIn, user: User) -> None:
         reference_id = getattr(data, field)
         if reference_id is None:
             continue
-        reference = db.get(ReferenceValue, reference_id)
-        retained_stage = field == "customer_stage_id" and not stage_changed
-        if reference is None or (not reference.is_active and not retained_stage) or reference.category != category:
+        reference = locked_refs.get(reference_id)
+        retained = project.id is not None and reference_id == getattr(project, field)
+        if reference is None or (not reference.is_active and not retained) or reference.category != category:
             raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
         references[field] = reference
 
@@ -490,8 +497,9 @@ def create_project(
 ) -> dict:
     project = Project(cost=Decimal("0"), stage_scheme="customer")
     try:
-        references = _validate_financial_entries(db, data.financial_entries or [])
-        _apply(db, project, data, user)
+        locked_refs = _lock_references(db, data, data.financial_entries or [])
+        references = _validate_financial_entries(data.financial_entries or [], locked_refs)
+        _apply(db, project, data, user, locked_refs)
         db.add(project)
         db.flush()
         audit.record(
@@ -522,10 +530,11 @@ def update_project(
     project = _get_visible(db, project_id, user, for_update=True)
     _require_active(project)
     try:
-        references = _validate_financial_entries(db, data.financial_entries or [])
+        locked_refs = _lock_references(db, data, data.financial_entries or [])
+        references = _validate_financial_entries(data.financial_entries or [], locked_refs, project)
         field_labels = effective_project_field_labels(db)
         before = project_snapshot(db, project, field_labels=field_labels)
-        _apply(db, project, data, user)
+        _apply(db, project, data, user, locked_refs)
         after = project_snapshot(db, project, field_labels=field_labels)
         changed = not same_project_values(before, after)
         if changed:
@@ -549,18 +558,61 @@ def update_project(
     return to_out(project)
 
 
-def _validate_financial_entries(
-    db: Session,
-    entries: list[ProjectFinancialEntryIn],
-) -> list[dict[str, ReferenceValue]]:
+def _lock_references(
+    db: Session, data: ProjectIn | None, entries: list[ProjectFinancialEntryIn],
+) -> dict[int, ReferenceValue]:
     if len(entries) > 500:
         raise HTTPException(422, "Не более 500 финансовых строк на проект")
+    ids = {
+        value for entry in entries for value in (entry.status_id, entry.article_id, entry.cost_type_id)
+        if value is not None
+    }
+    if data is not None:
+        ids.update(value for value in (
+            data.payment_type_id, data.customer_stage_id, data.indicator_id, data.assessment_status_id,
+        ) if value is not None)
+    if not ids:
+        return {}
+    # Все ссылки карточки и финансов блокируются одной транзакцией в одинаковом порядке.
+    rows = db.scalars(
+        select(ReferenceValue).where(ReferenceValue.id.in_(ids)).order_by(ReferenceValue.id)
+        .with_for_update(read=True).execution_options(populate_existing=True)
+    ).all()
+    return {row.id: row for row in rows}
+
+
+def _validate_financial_entries(
+    entries: list[ProjectFinancialEntryIn],
+    locked_refs: dict[int, ReferenceValue],
+    project: Project | None = None,
+) -> list[tuple[dict[str, ReferenceValue], ProjectFinancialEntry | None]]:
     category_fields = {
         "revenue": {"status_id": "revenue_status"},
         "cost": {"status_id": "cost_status", "article_id": "cost_article", "cost_type_id": "cost_type"},
     }
-    references = []
+    matches = []
+    old_rows = {row.id: row for row in project.financial_entries} if project else {}
+    used_ids: set[int] = set()
+    reserved_ids = {entry.id for entry in entries if entry.id is not None}
+    fields = ("kind", "year", "month", "amount", "vat_included", "status_id", "article_id", "cost_type_id")
+    explicit_ids = ["id" in entry.model_fields_set for entry in entries]
+    if any(explicit_ids) and not all(explicit_ids):
+        raise HTTPException(422, {"field": "id", "message": (
+            "Укажите ID для каждой финансовой строки: число для существующей, null для новой."
+        )})
+    explicit_protocol = bool(entries) and all(explicit_ids)
     for entry in entries:
+        old = old_rows.get(entry.id) if entry.id is not None else None
+        if entry.id is not None:
+            if old is None or entry.id in used_ids:
+                raise HTTPException(422, {"field": "id", "message": "Недопустимый или повторный ID финансовой строки"})
+            used_ids.add(entry.id)
+        elif not explicit_protocol:
+            # Без ID безопасно сохранять идентичность только полностью совпавшей строки.
+            old = next((row for row in old_rows.values() if row.id not in used_ids and row.id not in reserved_ids
+                        and all(getattr(row, field) == getattr(entry, field) for field in fields)), None)
+            if old is not None:
+                used_ids.add(old.id)
         if entry.kind == "revenue":
             for field in ("article_id", "cost_type_id"):
                 if getattr(entry, field) is not None:
@@ -570,59 +622,81 @@ def _validate_financial_entries(
             ref_id = getattr(entry, field)
             if ref_id is None and entry.kind == "cost" and field != "status_id":
                 raise HTTPException(422, {"field": field, "message": "Обязательное поле"})
-            ref = db.get(ReferenceValue, ref_id) if ref_id is not None else None
-            if ref is not None and (not ref.is_active or ref.category != category):
+            ref = locked_refs.get(ref_id)
+            retained = old is not None and old.kind == entry.kind and getattr(old, field) == ref_id
+            if ref is not None and not ref.is_active and not retained and entry.id is None and project is not None:
+                raise HTTPException(422, {"field": field, "message": (
+                    "Неактивное значение нельзя назначить новой строке. Чтобы изменить существующую строку, "
+                    "загрузите карточку заново и передайте её ID."
+                )})
+            if ref is not None and ((not ref.is_active and not retained) or ref.category != category):
                 raise HTTPException(
-                    422, {"field": field, "message": "Справочник не соответствует типу финансовой строки"}
+                    422, {"field": field, "message": "Справочник не соответствует типу финансовой строки"},
                 )
             if ref is None:
                 raise HTTPException(422, {"field": field, "message": "Значение справочника не найдено"})
             row_refs[field] = ref
-        references.append(row_refs)
-    return references
+        matches.append((row_refs, old))
+
+    # Без ID нельзя отличить редактирование от удаления и добавления, а также
+    # выбрать, какую из нескольких одинаковых строк следует удалить.
+    unmatched_old = [row for row in old_rows.values() if row.id not in used_ids]
+    new_without_id = any(entry.id is None and old is None for entry, (_, old) in zip(entries, matches, strict=True))
+    ambiguous_duplicate = any(
+        entry.id is None and old is not None
+        and any(all(getattr(row, field) == getattr(entry, field) for field in fields) for row in unmatched_old)
+        for entry, (_, old) in zip(entries, matches, strict=True)
+    )
+    if not explicit_protocol and unmatched_old and (new_without_id or ambiguous_duplicate):
+        raise HTTPException(422, {"field": "id", "message": (
+            "Неоднозначное изменение финансовых строк. Обновите карточку и передайте ID существующих строк; "
+            "удаление и добавление без ID выполните раздельно."
+        )})
+    return matches
 
 
 def _replace_financial_entries(
     db: Session,
     project: Project,
     entries: list[ProjectFinancialEntryIn],
-    references: list[dict[str, ReferenceValue]],
+    references: list[tuple[dict[str, ReferenceValue], ProjectFinancialEntry | None]],
     user: User,
 ) -> bool:
-    # Проверка справочников завершена до изменения карточки и финансов; коммит выполняет маршрут.
+    # Изменяем сопоставленные строки на месте; новые создаём, исключённые удаляем.
     field_labels = effective_project_field_labels(db)
-    before = [financial_snapshot(row, field_labels=field_labels) for row in project.financial_entries]
-    after = [
-        financial_snapshot(entry, ref, field_labels=field_labels)
-        for entry, ref in zip(entries, references, strict=True)
-    ]
-    if same_finances(before, after):
-        return False
-    project.financial_entries.clear()
-    db.flush()
-    project.financial_entries.extend(
-        ProjectFinancialEntry(
-            kind=entry.kind,
-            year=entry.year,
-            month=entry.month,
-            amount=entry.amount,
-            vat_included=entry.vat_included,
-            status=ref["status_id"],
-            article=ref.get("article_id"),
-            cost_type=ref.get("cost_type_id"),
+    before = [financial_snapshot(row, field_labels=field_labels) | {"_row_id": row.id}
+              for row in project.financial_entries]
+    after = [financial_snapshot(entry, ref, field_labels=field_labels)
+             for entry, (ref, _) in zip(entries, references, strict=True)]
+    changed = len(project.financial_entries) != len(entries) or any(
+        old is None or not same_finances(
+            [financial_snapshot(old, field_labels=field_labels)], [snapshot],
         )
-        for entry, ref in zip(entries, references, strict=True)
+        for snapshot, (_, old) in zip(after, references, strict=True)
     )
+    if not changed:
+        return False
+    keep = {old.id for _, old in references if old is not None}
+    for old in list(project.financial_entries):
+        if old.id not in keep:
+            project.financial_entries.remove(old)
+    saved_rows = []
+    for entry, (ref, old) in zip(entries, references, strict=True):
+        row = old if old is not None else ProjectFinancialEntry()
+        if old is None:
+            project.financial_entries.append(row)
+        for field in ("kind", "year", "month", "amount", "vat_included"):
+            setattr(row, field, getattr(entry, field))
+        row.status = ref["status_id"]
+        row.article = ref.get("article_id")
+        row.cost_type = ref.get("cost_type_id")
+        saved_rows.append(row)
+    db.flush()
+    after = [snapshot | {"_row_id": row.id} for snapshot, row in zip(after, saved_rows, strict=True)]
     project.updated_at = func.now()
     audit.record(
-        db,
-        user.id,
-        "replace_financial_entries",
-        "project",
-        project.id,
-        before=before,
-        after=after,
-        author_name=user.full_name,
+        db, user.id, "replace_financial_entries", "project", project.id,
+        before=before, after=after, author_name=user.full_name,
     )
     return True
 
@@ -637,7 +711,8 @@ def replace_financial_entries(
     project = _get_visible(db, project_id, user, for_update=True)
     _require_active(project)
     try:
-        references = _validate_financial_entries(db, entries)
+        locked_refs = _lock_references(db, None, entries)
+        references = _validate_financial_entries(entries, locked_refs, project)
         changed = _replace_financial_entries(db, project, entries, references, user)
         if not changed:
             return project.financial_entries

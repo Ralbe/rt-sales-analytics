@@ -20,10 +20,14 @@ def refs(db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> 
     by_category: dict[str, list[ReferenceValue]] = {}
     for value in reference_values:
         by_category.setdefault(value.category, []).append(value)
+    segments = db.scalars(select(Segment).order_by(Segment.name)).all()
+    services = db.scalars(select(Service).order_by(Service.group_name, Service.name)).all()
 
     return with_project_field_labels(db, {
-        "segments": db.scalars(select(Segment).order_by(Segment.name)).all(),
-        "services": db.scalars(select(Service).order_by(Service.group_name, Service.name)).all(),
+        "segments": [row for row in segments if row.is_active],
+        "services": [row for row in services if row.is_active],
+        "filter_segments": segments,
+        "filter_services": services,
         "managers": db.scalars(
             select(User).where(User.is_active).order_by(User.full_name)
         ).all(),

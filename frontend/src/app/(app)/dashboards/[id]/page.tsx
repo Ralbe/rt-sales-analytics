@@ -13,6 +13,7 @@ import { MultiSelect } from "@/components/MultiSelect";
 import { QueryState } from "@/components/QueryState";
 import { ApiError, api, del, post, put } from "@/lib/api";
 import { canConfigureDashboards, canPublishDashboards, seesAllProjects, useMe, useRefs } from "@/lib/hooks";
+import { segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
 import type { Dashboard, DashboardFilters, Widget } from "@/lib/types";
 
 // Сетка рассчитана так, чтобы 12 строк занимали ровно видимую высоту экрана
@@ -174,8 +175,8 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
         <div className="filters">
           {refs && (
             <>
-              <MultiSelect label="Сегменты" options={refs.segments} value={filters.segment_ids} onChange={setFilter("segment_ids")} />
-              <MultiSelect label="Услуги" options={refs.services} value={filters.service_ids} onChange={setFilter("service_ids")} />
+              <MultiSelect label="Сегменты" options={segmentFilterOptions(refs)} value={filters.segment_ids} onChange={setFilter("segment_ids")} />
+              <MultiSelect label="Услуги" options={serviceFilterOptions(refs)} value={filters.service_ids} onChange={setFilter("service_ids")} />
               {seesAllProjects(me?.role) && (
                 <MultiSelect
                   label="Менеджеры"

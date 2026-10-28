@@ -163,13 +163,16 @@ def test_concurrent_replacements_are_serialized_with_true_audit(pg_api, monkeypa
     payload = pg_api.payload()
     saved = pg_api.create(payload)
     project_id = saved["id"]
+    row_id = saved["financial_entries"][0]["id"]
     first_body = deepcopy(payload)
     first_body.update(
-        description="Первый запрос", financial_entries=[{**payload["financial_entries"][0], "amount": "2.345"}]
+        description="Первый запрос",
+        financial_entries=[{**payload["financial_entries"][0], "id": row_id, "amount": "2.345"}],
     )
     second_body = deepcopy(payload)
     second_body.update(
-        description="Второй запрос", financial_entries=[{**payload["financial_entries"][0], "amount": "3.456"}]
+        description="Второй запрос",
+        financial_entries=[{**payload["financial_entries"][0], "id": row_id, "amount": "3.456"}],
     )
     first_inside, release_first, second_started = Event(), Event(), Event()
     pids = {}
@@ -254,6 +257,17 @@ def test_concurrent_replacements_are_serialized_with_true_audit(pg_api, monkeypa
 
 def test_concurrent_duplicate_create_returns_201_and_409_without_partial_audit(pg_api, monkeypatch):
     payload = pg_api.payload()
+    other = deepcopy(payload)
+    # Разные справочники позволяют обоим запросам пройти проверку дубликата одновременно,
+    # сохраняя реальную гонку по уникальности проекта после введения блокировок ссылок.
+    with Session(pg_api.engine) as db:
+        other["customer_stage_id"] = db.scalar(select(ReferenceValue.id).where(
+            ReferenceValue.category == "customer_stage", ReferenceValue.id != payload["customer_stage_id"],
+        ).order_by(ReferenceValue.id))
+        other["financial_entries"][0]["status_id"] = db.scalar(select(ReferenceValue.id).where(
+            ReferenceValue.category == "revenue_status",
+            ReferenceValue.id != payload["financial_entries"][0]["status_id"],
+        ).order_by(ReferenceValue.id))
     both_checked = Barrier(2, timeout=WAIT_SECONDS)
     find_duplicate = projects._find_duplicate
 
@@ -269,7 +283,7 @@ def test_concurrent_duplicate_create_returns_201_and_409_without_partial_audit(p
     monkeypatch.setattr(projects, "_find_duplicate", synchronized_check)
     before = _counts(pg_api.engine)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(pg_api.request, "POST", "", payload) for _ in range(2)]
+        futures = [pool.submit(pg_api.request, "POST", "", body) for body in (payload, other)]
         responses = [future.result(timeout=WAIT_SECONDS + 5) for future in futures]
     assert sorted(response.status_code for response in responses) == [201, 409]
     conflict = next(response for response in responses if response.status_code == 409)
@@ -298,6 +312,8 @@ def test_numeric_maxima_preserve_exact_amounts_and_vat(pg_api, operation):
             _finance(db, amount="999999999999.999", vat_included=True),
             _finance(db, "cost", amount="999999999999.999", vat_included=False),
         ]
+    rows[0]["id"] = saved["financial_entries"][0]["id"] if saved else None
+    rows[1]["id"] = None
     maximum = {**payload, "amount": "999999999999.99", "cost": "999999999999.99", "financial_entries": rows}
     if operation == "legacy":
         response = pg_api.request("PUT", f"/{saved['id']}/financial-entries", rows)
