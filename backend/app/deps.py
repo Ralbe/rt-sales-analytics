@@ -1,6 +1,7 @@
 from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.security import ACCESS_COOKIE, SCOPE_ACCESS, decode_token_context
@@ -31,6 +32,23 @@ def require_roles(*roles: Role) -> Callable[[User], User]:
         return user
 
     return dependency
+
+
+def lock_actor(db: Session, user: User, *, roles: set[Role] | None = None, exclusive: bool = False) -> User:
+    """Не допускает изменения прав пользователя до окончания защищённой операции."""
+    version = user.auth_version
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite не поддерживает FOR SHARE/FOR UPDATE; резервируем блокировку записи.
+        db.execute(update(User).where(User.id == user.id).values(auth_version=User.auth_version))
+    locked = db.scalar(
+        select(User).where(User.id == user.id)
+        .with_for_update(read=not exclusive).execution_options(populate_existing=True)
+    )
+    if locked is None or not locked.is_active or locked.auth_version != version:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется вход в систему")
+    if roles is not None and locked.role not in roles:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+    return locked
 
 
 def manager_scope(user: User) -> int | None:

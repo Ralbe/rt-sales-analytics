@@ -157,16 +157,19 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
     <>
       <div className="page-header">
         {editable ? (
-          <input
-            className="input"
-            style={{ maxWidth: 280, fontWeight: 600, fontSize: 16 }}
-            value={name}
-            aria-label="Название дашборда"
-            onChange={(e) => {
-              setName(e.target.value);
-              setDirty(true);
-            }}
-          />
+          <div>
+            <input
+              className="input"
+              style={{ maxWidth: 280, fontWeight: 600, fontSize: 16 }}
+              value={name}
+              aria-label="Название дашборда"
+              onChange={(e) => {
+                setName(e.target.value);
+                setDirty(true);
+              }}
+            />
+            <span className="muted" style={{ fontSize: 13, marginLeft: 8 }}>Автор: {dashboard.owner.full_name}</span>
+          </div>
         ) : (
           <h1>
             {dashboard.name} <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>· {dashboard.owner.full_name}</span>
