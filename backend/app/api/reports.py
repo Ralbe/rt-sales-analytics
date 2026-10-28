@@ -318,7 +318,13 @@ def page(
 
 @router.get("/report-snapshots/{snapshot_id}/export")
 def export(snapshot_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    item = with_timeout_handling(db, lambda: snapshot(db, actor(db, user), snapshot_id))
+    def authorized_snapshot():
+        current = actor(db, user)
+        item = snapshot(db, current, snapshot_id)
+        editor(current)
+        return item
+
+    item = with_timeout_handling(db, authorized_snapshot)
     wb = Workbook(write_only=True)
     wb.properties.title = item.title
     ws = wb.create_sheet("Отчёт")

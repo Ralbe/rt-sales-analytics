@@ -45,6 +45,16 @@ async function setup(page: Page, options: { role?: Role; total?: number; saveSta
   return requests;
 }
 
+for (const role of ["user", "analyst", "admin"] as const) {
+  test(`${role}: просмотр и печать снимка доступны, скачивание XLSX только редакторам`, async ({ page }) => {
+    await setup(page, { role });
+    await page.goto("/reports/snapshots/snap-1");
+    await expect(page.getByText("Строка 1", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "PDF / Печать всех строк" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Скачать XLSX" })).toHaveCount(role === "user" ? 0 : 1);
+  });
+}
+
 test("аналитик создаёт отчёт, меняет порядок, фильтр, сортировку и сохраняет", async ({ page }) => {
   const requests = await setup(page); await page.goto("/reports/new");
   await page.getByLabel("Название отчёта").fill("Проверка");

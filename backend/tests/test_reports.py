@@ -55,6 +55,7 @@ def test_private_public_scope_and_revocation(client, db):
     sid = run["snapshot_id"]
     rows = client.get(f"/api/report-snapshots/{sid}").json()["rows"]
     assert rows
+    assert client.get(f"/api/report-snapshots/{sid}/export").status_code == 403
     own = set(db.scalars(select(Project.id).where(Project.manager_id == manager.id, Project.archived_at.is_(None))))
     assert {row["project.id"] for row in rows} <= own
     client.post("/api/auth/logout")
@@ -64,6 +65,15 @@ def test_private_public_scope_and_revocation(client, db):
     login(client, db, "manager1@example.com")
     assert client.get(f"/api/report-snapshots/{sid}").status_code == 404
     assert client.get(f"/api/report-snapshots/{sid}/export").status_code == 404
+
+
+def test_admin_can_export_own_report_snapshot(client, db):
+    login(client, db, "admin@example.com")
+    report = create(client)
+    sid = client.post(f"/api/reports/{report['id']}/run", json={"version": 1}).json()["snapshot_id"]
+    response = client.get(f"/api/report-snapshots/{sid}/export")
+    assert response.status_code == 200
+    assert response.content[:2] == b"PK"
 
 
 def test_demoted_owner_cannot_read_private_or_old_snapshot(client, db):
