@@ -3,12 +3,13 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { MultiSelect } from "@/components/MultiSelect";
 import { QueryState } from "@/components/QueryState";
 import { api, toQuery } from "@/lib/api";
 import { date } from "@/lib/format";
+import { calendarPeriod, isPeriodDate, periodError, type PeriodPreset } from "@/lib/event-period";
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import type { ProjectPage, Stage } from "@/lib/types";
@@ -80,11 +81,59 @@ export default function ProjectsPage() {
   const [openOnly, setOpenOnly] = useState(false);
   const [createdFrom, setCreatedFrom] = useState("");
   const [createdTo, setCreatedTo] = useState("");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset | "">("");
+  const [urlPeriodError, setUrlPeriodError] = useState(false);
   const q = useDebounced(search.trim());
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const from = url.searchParams.get("date_from") ?? "";
+    const to = url.searchParams.get("date_to") ?? "";
+    const preset = url.searchParams.get("period_preset");
+    if ((!from || isPeriodDate(from)) && (!to || isPeriodDate(to))) {
+      setCreatedFrom(from);
+      setCreatedTo(to);
+      let selected: PeriodPreset | "" = from || to ? "custom" : "";
+      if (preset === "week" || preset === "month" || preset === "quarter") {
+        const [start, end] = calendarPeriod(preset, new Date());
+        if (from === start && to === end) selected = preset;
+      }
+      setPeriodPreset(selected);
+      if (selected === "custom" && preset && preset !== "custom") {
+        url.searchParams.set("period_preset", "custom");
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    } else {
+      setUrlPeriodError(true);
+    }
+  }, []);
+
+  const updatePeriod = (from: string, to: string, preset: PeriodPreset | "") => {
+    setUrlPeriodError(false);
+    setCreatedFrom(from);
+    setCreatedTo(to);
+    setPeriodPreset(preset);
+    const url = new URL(window.location.href);
+    for (const [key, value] of Object.entries({ date_from: from, date_to: to, period_preset: preset })) {
+      if (value) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    }
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+  const selectPeriod = (preset: PeriodPreset | "") => {
+    if (!preset) return updatePeriod("", "", "");
+    if (preset === "custom") return updatePeriod(createdFrom, createdTo, preset);
+    const [from, to] = calendarPeriod(preset, new Date());
+    updatePeriod(from, to, preset);
+  };
+  const error = urlPeriodError ? "Некорректные даты периода в ссылке." : periodError(createdFrom, createdTo);
+  const periodParams = createdFrom && createdTo && !error
+    ? { date_from: createdFrom, date_to: createdTo, period_preset: periodPreset || "custom" }
+    : {};
 
   const params = {
     q, segment_id: segments, service_id: services, manager_id: managers, stage: stages,
-    customer_stage_id: customerStage, implementation_year: implementationYear, sort,
+    customer_stage_id: customerStage, implementation_year: implementationYear, sort, ...periodParams,
     ...(archived && me?.role === "admin" ? { archived: true } : {}),
     ...(openOnly ? { open_only: true } : {}),
   };
@@ -180,10 +229,15 @@ export default function ProjectsPage() {
         <fieldset style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
           <legend>Отметить проекты, созданные за период (UTC)</legend>
           <div className="filters">
-            <label>С <input className="input" type="date" aria-label="Начало периода создания (UTC)" value={createdFrom} onChange={(event) => setCreatedFrom(event.target.value)} /></label>
-            <label>По <input className="input" type="date" aria-label="Конец периода создания (UTC)" value={createdTo} onChange={(event) => setCreatedTo(event.target.value)} /></label>
+            <label>Период событий <select className="input" aria-label="Период событий" value={periodPreset} onChange={(event) => selectPeriod(event.target.value as PeriodPreset | "")}>
+              <option value="">Не выбран</option><option value="week">Неделя</option><option value="month">Месяц</option><option value="quarter">Квартал</option><option value="custom">Произвольный период</option>
+            </select></label>
+            <label>С <input className="input" type="date" aria-label="Начало периода создания (UTC)" value={createdFrom} onChange={(event) => updatePeriod(event.target.value, createdTo, "custom")} /></label>
+            <label>По <input className="input" type="date" aria-label="Конец периода создания (UTC)" value={createdTo} onChange={(event) => updatePeriod(createdFrom, event.target.value, "custom")} /></label>
+            <button type="button" className="btn small" disabled={!createdFrom && !createdTo && !periodPreset && !urlPeriodError} onClick={() => updatePeriod("", "", "")}>Сбросить период</button>
           </div>
-          {createdFrom && createdTo && createdFrom > createdTo && <p className="error" role="alert">Начало периода не может быть позже конца.</p>}
+          <p className="hint">Неделя начинается в понедельник. Даты включаются полностью по UTC.</p>
+          {error && <p className="error" role="alert">{error}</p>}
         </fieldset>
         <label className="check">
           <input type="checkbox" checked={openOnly} aria-describedby="open-projects-scope" onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
@@ -216,7 +270,7 @@ export default function ProjectsPage() {
             <tbody style={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
               {data?.items.map((p) => (
                 <tr key={p.id} className="clickable" onClick={() => router.push(`/projects/${p.id}`)}>
-                  <td>{p.name}<CreationMarker value={p.created_at} from={createdFrom} to={createdTo} /></td>
+                  <td>{p.name}<CreationMarker value={p.created_at} from={error ? "" : createdFrom} to={createdTo} /></td>
                   <td>{p.client.name}</td>
                   <td>{p.client_inn || "—"}</td>
                   <td>{p.segment.name}</td>

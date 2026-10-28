@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from io import BytesIO
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -167,7 +168,17 @@ class ListParams:
         sort: str = Query(default="-updated_at", pattern=SORT_PATTERN),
         customer_stage_id: int | None = Query(default=None, ge=1),
         implementation_year: int | None = Query(default=None, ge=1900, le=2200),
+        date_from: date | None = None,
+        date_to: date | None = None,
+        period_preset: Literal["week", "month", "quarter", "custom"] | None = None,
     ):
+        if (date_from is None) != (date_to is None) or (period_preset is not None and date_from is None):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Укажите начало и конец периода")
+        if date_from is not None and date_to is not None:
+            if date_from > date_to:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Начало периода не может быть позже конца")
+            if (date_to - date_from).days > 36600:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Период не может превышать 36600 дней")
         self.q, self.segment_id, self.service_id = q, segment_id, service_id
         self.manager_id, self.stage, self.open_only, self.sort = manager_id, stage, open_only, sort
         self.archived = archived

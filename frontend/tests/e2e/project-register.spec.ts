@@ -302,3 +302,25 @@ test("период событий: високосный февраль и пос
   await expect(from).toHaveValue("2028-10-01");
   await expect(to).toHaveValue("2028-12-31");
 });
+
+test("период событий: старая ссылка сохраняет даты без неверного пресета", async ({ page }) => {
+  await page.clock.install({ time: new Date("2027-01-01T12:00:00Z") });
+  await mockApi(page);
+  await page.goto("/projects?date_from=2026-01-01&date_to=2026-01-31&period_preset=week");
+  await expect(page.getByLabel("Начало периода создания (UTC)")).toHaveValue("2026-01-01");
+  await expect(page.getByLabel("Конец периода создания (UTC)")).toHaveValue("2026-01-31");
+  await expect(page.getByLabel("Период событий")).toHaveValue("custom");
+  await expect(page).toHaveURL(/period_preset=custom/);
+});
+
+for (const invalid of ["2026-02-30", "0000-01-01"]) {
+  test(`период событий: неверная дата ${invalid} в ссылке показывает ошибку и сбрасывается`, async ({ page }) => {
+    const requests = await mockApi(page);
+    await page.goto(`/projects?date_from=${invalid}&date_to=2026-03-01&period_preset=custom`);
+    await expect(page.getByRole("alert").filter({ hasText: "Некорректные даты периода в ссылке." })).toBeVisible();
+    expect(requests.at(-1)?.has("date_from")).toBe(false);
+    await page.getByRole("button", { name: "Сбросить период" }).click();
+    await expect(page).not.toHaveURL(/date_from=/);
+    await expect(page.getByText("Некорректные даты периода в ссылке.")).toHaveCount(0);
+  });
+}
