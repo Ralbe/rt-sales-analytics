@@ -250,3 +250,77 @@ test("реестр отмечает проекты, созданные в выб
   await expect(page.getByRole("alert").filter({ hasText: "Начало периода не может быть позже конца." })).toBeVisible();
   await expect(page.getByText(/Создан за период:/)).toHaveCount(0);
 });
+
+test("период событий: календарные границы UTC сохраняются в адресе и сбрасываются", async ({ page }) => {
+  await page.clock.install({ time: new Date("2027-01-01T12:00:00Z") });
+  const requests = await mockApi(page, [project()], 41);
+  await page.goto("/projects");
+  const from = page.getByLabel("Начало периода создания (UTC)");
+  const to = page.getByLabel("Конец периода создания (UTC)");
+  const preset = page.getByLabel("Период событий");
+  await preset.selectOption("week");
+  await expect(from).toHaveValue("2026-12-28");
+  await expect(to).toHaveValue("2027-01-03");
+  await expect.poll(() => requests.at(-1)?.get("date_from")).toBe("2026-12-28");
+  await expect.poll(() => requests.at(-1)?.get("date_to")).toBe("2027-01-03");
+  await expect(page).toHaveURL(/date_from=2026-12-28/);
+  await page.reload();
+  await expect(from).toHaveValue("2026-12-28");
+  await expect(to).toHaveValue("2027-01-03");
+  await expect(preset).toHaveValue("week");
+  await preset.selectOption("quarter");
+  await expect(from).toHaveValue("2027-01-01");
+  await expect(to).toHaveValue("2027-03-31");
+  await preset.selectOption("month");
+  await expect(from).toHaveValue("2027-01-01");
+  await expect(to).toHaveValue("2027-01-31");
+  await from.fill("2026-02-01");
+  await to.fill("2026-02-28");
+  await expect(preset).toHaveValue("custom");
+  await from.fill("1900-01-01");
+  await to.fill("2101-01-01");
+  await expect(page.getByRole("alert").filter({ hasText: "Период не может превышать 36600 дней." })).toBeVisible();
+  await expect(page.getByText(/Создан за период:/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Сбросить период" }).click();
+  await expect(from).toHaveValue("");
+  await expect(to).toHaveValue("");
+  await expect(page).not.toHaveURL(/date_from=/);
+});
+
+test("период событий: високосный февраль и последний квартал года", async ({ page }) => {
+  await page.clock.install({ time: new Date("2028-02-29T12:00:00Z") });
+  await mockApi(page);
+  await page.goto("/projects");
+  const from = page.getByLabel("Начало периода создания (UTC)");
+  const to = page.getByLabel("Конец периода создания (UTC)");
+  const preset = page.getByLabel("Период событий");
+  await preset.selectOption("month");
+  await expect(from).toHaveValue("2028-02-01");
+  await expect(to).toHaveValue("2028-02-29");
+  await page.clock.setFixedTime(new Date("2028-12-31T23:00:00Z"));
+  await preset.selectOption("quarter");
+  await expect(from).toHaveValue("2028-10-01");
+  await expect(to).toHaveValue("2028-12-31");
+});
+
+test("период событий: старая ссылка сохраняет даты без неверного пресета", async ({ page }) => {
+  await page.clock.install({ time: new Date("2027-01-01T12:00:00Z") });
+  await mockApi(page);
+  await page.goto("/projects?date_from=2026-01-01&date_to=2026-01-31&period_preset=week");
+  await expect(page.getByLabel("Начало периода создания (UTC)")).toHaveValue("2026-01-01");
+  await expect(page.getByLabel("Конец периода создания (UTC)")).toHaveValue("2026-01-31");
+  await expect(page.getByLabel("Период событий")).toHaveValue("custom");
+  await expect(page).toHaveURL(/period_preset=custom/);
+});
+
+for (const invalid of ["2026-02-30", "0000-01-01"]) {
+  test(`период событий: неверная дата ${invalid} в ссылке показывает ошибку и сбрасывается`, async ({ page }) => {
+    const requests = await mockApi(page);
+    await page.goto(`/projects?date_from=${invalid}&date_to=2026-03-01&period_preset=custom`);
+    await expect(page.getByRole("alert").filter({ hasText: "Некорректные даты периода в ссылке." })).toBeVisible();
+    expect(requests.at(-1)?.has("date_from")).toBe(false);
+    await page.getByRole("button", { name: "Сбросить период" }).click();
+    await expect(page).not.toHaveURL(/date_from=/);
+    await expect(page.getByText("Некорректные даты периода в ссылке.")).toHaveCount(0);
+  });
+}
