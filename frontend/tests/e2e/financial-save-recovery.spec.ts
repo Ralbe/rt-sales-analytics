@@ -50,6 +50,7 @@ type ProjectWrite = Pick<Project, "name" | "description" | "amount" | "cost" |
   customer_stage_id?: number;
 };
 type FinancialWrite = Pick<FinancialEntry, "kind" | "year" | "month" | "amount" | "vat_included"> & {
+  id?: number | null;
   status_id: number;
   article_id: number | null;
   cost_type_id: number | null;
@@ -134,7 +135,7 @@ async function mockApi(page: Page, editing = false, options: {
       expect(Array.isArray(body.financial_entries)).toBe(true);
       for (const row of body.financial_entries) {
         expect(Object.keys(row).sort()).toEqual([
-          "amount", "article_id", "cost_type_id", "kind", "month", "status_id", "vat_included", "year",
+          "amount", "article_id", "cost_type_id", "id", "kind", "month", "status_id", "vat_included", "year",
         ]);
       }
       await options.saveGate;
@@ -151,7 +152,7 @@ async function mockApi(page: Page, editing = false, options: {
         ...(customerScheme ? { stage_scheme: "customer", stage: null, customer_stage: REFS.customer_stages[0], probability: 30 } : {}),
         updated_at: "2026-10-25T12:00:00Z",
         financial_entries: body.financial_entries.map((row, index) => ({
-          id: 30 + index, kind: row.kind, year: row.year, month: row.month,
+          id: row.id ?? 30 + index, kind: row.kind, year: row.year, month: row.month,
           amount: Number(row.amount).toFixed(3), vat_included: row.vat_included,
           status: (row.kind === "revenue" ? REFS.revenue_statuses : REFS.cost_statuses).find((item) => item.id === row.status_id),
           article: REFS.cost_articles.find((item) => item.id === row.article_id) ?? null,
@@ -267,7 +268,7 @@ test("создание: атомарный отказ не создаёт кар
   expect(state.creates).toHaveLength(1);
   expect(state.creates[0]).toMatchObject({
     name, client_id: CLIENT.id, service_id: 3, manager_id: USER.id,
-    amount: "10000.00", cost: "2000.00", financial_entries: FINANCIAL_ROWS,
+    amount: "10000.00", cost: "2000.00", financial_entries: FINANCIAL_ROWS.map((row) => ({ ...row, id: null })),
   });
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("project-draft") ?? "null")?.name)).toBe(name);
   await expect(page.getByRole("button", { name: "Создать проект", exact: true })).toBeEnabled();
@@ -302,7 +303,7 @@ test("редактирование: полный rollback после 503 сох�
   await expect(save).toBeEnabled();
   expect(state.current).toEqual(PROJECT);
   expect(state.updates).toHaveLength(1);
-  expect(state.updates[0].financial_entries).toEqual(FINANCIAL_ROWS);
+  expect(state.updates[0].financial_entries).toEqual(FINANCIAL_ROWS.map((row, index) => ({ ...row, id: 20 + index })));
   expect(state.reads).toHaveLength(1);
   await save.click();
   await expect(saveMessage(page)).toHaveCount(0);
@@ -495,7 +496,7 @@ test("подтверждённый POST и последующий сбой refet
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
   expect(state.creates).toHaveLength(1);
   expect(state.updates).toHaveLength(1);
-  expect(state.updates[0].financial_entries).toEqual(FINANCIAL_ROWS);
+  expect(state.updates[0].financial_entries).toEqual(FINANCIAL_ROWS.map((row, index) => ({ ...row, id: 30 + index })));
   expect(state.writes).toEqual(["POST /projects", "PUT /projects/" + PROJECT.id]);
   expect(state.unexpected).toEqual([]);
 });
