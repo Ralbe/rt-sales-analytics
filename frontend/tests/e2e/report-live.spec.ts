@@ -154,7 +154,7 @@ test("M-01 и M-02: отчёт от конструктора до витрины
     const downloadPath = testInfo.outputPath("report.xlsx");
     await download.saveAs(downloadPath);
     // openpyxl уже установлен для backend в CI: проверяем содержимое, а не только ZIP-сигнатуру.
-    const script = "import json,openpyxl,sys; w=openpyxl.load_workbook(sys.argv[1],read_only=True,data_only=True); print(json.dumps(list(w.active.values),ensure_ascii=False)); w.close()";
+    const script = "import json,openpyxl,sys; w=openpyxl.load_workbook(sys.argv[1],read_only=True,data_only=True); print(json.dumps(list(w.active.values))); w.close()";
     const { stdout } = await runFile("python", ["-c", script, downloadPath]);
     expect(JSON.parse(stdout)).toEqual([[projectField!.label], [projectName]]);
 
