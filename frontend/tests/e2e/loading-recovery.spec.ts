@@ -87,6 +87,40 @@ test("дашборды: после 503 повтор открывает реда�
   expect(attempts).toBeGreaterThan(beforeRetry);
 });
 
+test("администратор видит автора и сохраняет чужой дашборд", async ({ page }) => {
+  let dashboard = { ...DASHBOARD, owner: { id: 9, full_name: "Автор дашборда" }, editable: true };
+  await mockApi(page, {
+    "/dashboards/7": async (route) => {
+      if (route.request().method() === "PUT") {
+        dashboard = { ...dashboard, ...route.request().postDataJSON() };
+      }
+      return route.fulfill({ json: dashboard });
+    },
+  }, "admin");
+  await page.goto("/dashboards/7");
+  await expect(page.getByText("Автор: Автор дашборда")).toBeVisible();
+  await page.getByLabel("Название дашборда").fill("Обновлённый дашборд");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect.poll(() => dashboard.name).toBe("Обновлённый дашборд");
+  expect(dashboard.owner.id).toBe(9);
+});
+
+test("администратор видит собственные, общие и чужие личные дашборды раздельно", async ({ page }) => {
+  const own = { ...DASHBOARD, name: "Собственный" };
+  const shared = { ...DASHBOARD, id: 8, name: "Общий чужой", owner: { id: 9, full_name: "Автор" }, is_shared: true };
+  const privateDashboard = { ...shared, id: 9, name: "Личный чужой", is_shared: false };
+  await mockApi(page, { "/dashboards": (route) => route.fulfill({ json: [own, shared, privateDashboard] }) }, "admin");
+  await page.goto("/projects");
+  const sidebar = page.locator(".sidebar");
+  await expect(sidebar.getByRole("link", { name: "Личный чужой" })).toBeVisible();
+  const links = await sidebar.locator(".section, a").allTextContents();
+  expect(links.indexOf("Мои дашборды")).toBeLessThan(links.indexOf("Собственный"));
+  expect(links.indexOf("Собственный")).toBeLessThan(links.indexOf("Общие"));
+  expect(links.indexOf("Общие")).toBeLessThan(links.indexOf("Общий чужой"));
+  expect(links.indexOf("Общий чужой")).toBeLessThan(links.indexOf("Другие дашборды"));
+  expect(links.indexOf("Другие дашборды")).toBeLessThan(links.indexOf("Личный чужой"));
+});
+
 for (const role of ["user", "analyst"] as const) {
   test(`дашборды: пустой список завершает загрузку для роли ${role}`, async ({ page }) => {
     await mockApi(page, { "/dashboards": (route) => route.fulfill({ json: [] }) }, role);

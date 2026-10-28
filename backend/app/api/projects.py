@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core import cache
 from app.db import get_db
-from app.deps import PROJECT_EDITORS, get_current_user, manager_scope, require_roles
+from app.deps import PROJECT_EDITORS, get_current_user, lock_actor, manager_scope, require_roles
 from app.history_schemas import ProjectHistoryPage
 from app.models import (
     CLOSED_STAGES,
@@ -343,6 +343,7 @@ def archive_project(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(Role.admin)),
 ) -> dict:
+    user = lock_actor(db, user, roles={Role.admin})
     return _set_archived(db, project_id, user, archived=True)
 
 
@@ -352,6 +353,7 @@ def restore_project(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(Role.admin)),
 ) -> dict:
+    user = lock_actor(db, user, roles={Role.admin})
     return _set_archived(db, project_id, user, archived=False)
 
 
@@ -495,6 +497,7 @@ def create_project(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
+    user = lock_actor(db, user, roles=PROJECT_EDITORS)
     project = Project(cost=Decimal("0"), stage_scheme="customer")
     try:
         locked_refs = _lock_references(db, data, data.financial_entries or [])
@@ -527,6 +530,7 @@ def update_project(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
+    user = lock_actor(db, user, roles=PROJECT_EDITORS)
     project = _get_visible(db, project_id, user, for_update=True)
     _require_active(project)
     try:
@@ -708,6 +712,7 @@ def replace_financial_entries(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> list[ProjectFinancialEntry]:
+    user = lock_actor(db, user, roles=PROJECT_EDITORS)
     project = _get_visible(db, project_id, user, for_update=True)
     _require_active(project)
     try:

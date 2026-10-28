@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { QueryState } from "@/components/QueryState";
+import { useMe } from "@/lib/hooks";
 import { downloadSnapshot, reportError, reports, type SnapshotPage } from "@/lib/report-api";
 
 function cell(value: unknown): string { return value === null || value === undefined ? "—" : typeof value === "boolean" ? (value ? "Да" : "Нет") : String(value); }
@@ -11,6 +12,7 @@ function ReportTable({ page, rows }: { page: SnapshotPage; rows: Record<string, 
   return <table className="report-table"><thead><tr>{page.columns.map((c) => <th key={c.id} scope="col">{c.label}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={i}>{page.columns.map((c) => <td key={c.id}>{cell(row[c.id])}</td>)}</tr>)}</tbody></table>;
 }
 export function SnapshotViewer({ id }: { id: string }) {
+  const { data: me } = useMe();
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,7 +49,7 @@ export function SnapshotViewer({ id }: { id: string }) {
     {page && !query.error && <>
       <h2>{page.title || "Предпросмотр отчёта"}</h2>
       <p role="status">Всего строк: {page.total}. Снимок доступен до {new Date(page.expires_at).toLocaleString("ru-RU")}.</p>
-      <div className="report-actions"><button className="btn" disabled={busy} onClick={download}>Скачать XLSX</button><button className="btn" disabled={busy} onClick={print}>{busy ? "Подготовка…" : "PDF / Печать всех строк"}</button></div>
+      <div className="report-actions">{(me?.role === "analyst" || me?.role === "admin") && <button className="btn" disabled={busy} onClick={download}>Скачать XLSX</button>}<button className="btn" disabled={busy} onClick={print}>{busy ? "Подготовка…" : "PDF / Печать всех строк"}</button></div>
       {error && <div role="alert" className="alert">{error}</div>}
       {page.total === 0 ? <p>По выбранным условиям ничего не найдено.</p> : <><div className="report-table-scroll"><ReportTable page={page} rows={page.rows} /></div><div className="report-actions"><button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 100))}>Предыдущая страница</button><span>Строки {offset + 1}–{offset + page.rows.length} из {page.total}</span><button className="btn" disabled={offset + page.rows.length >= page.total} onClick={() => setOffset(offset + 100)}>Следующая страница</button></div></>}
     </>}

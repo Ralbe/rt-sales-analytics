@@ -210,8 +210,6 @@ def test_snapshot_access_serializes_concurrent_security_change(report_engine, re
 
     monkeypatch.setattr(report_builder, "lock_projects", held)
     path = f"/api/report-snapshots/{snapshot_id}"
-    if event in {"archive", "owner"}:
-        path += "/export"
     with report_engine.connect() as writer:
         writer_pid = writer.scalar(text("select pg_backend_pid()"))
         other_id = writer.scalar(select(User.id).where(User.email == "manager2@example.com"))

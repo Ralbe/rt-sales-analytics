@@ -24,6 +24,5 @@ DEFAULT_WIDGETS = [
 def create_default(db: Session, owner: User) -> Dashboard:
     dashboard = Dashboard(owner_id=owner.id, name="Дашборд 1", widgets=DEFAULT_WIDGETS, filters={})
     db.add(dashboard)
-    db.commit()
-    db.refresh(dashboard)
+    db.flush()
     return dashboard

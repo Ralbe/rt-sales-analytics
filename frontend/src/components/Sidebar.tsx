@@ -20,8 +20,9 @@ export function Sidebar({ user }: { user: User }) {
   });
   const dashboards = dashboardsQuery.data ?? [];
 
-  const own = dashboards.filter((d) => d.editable);
-  const shared = dashboards.filter((d) => !d.editable);
+  const own = dashboards.filter((d) => d.owner.id === user.id);
+  const shared = dashboards.filter((d) => d.owner.id !== user.id && d.is_shared);
+  const other = dashboards.filter((d) => d.owner.id !== user.id && !d.is_shared);
   const active = (href: string) => (pathname === href ? "active" : "");
 
   const logout = async () => {
@@ -52,6 +53,13 @@ export function Sidebar({ user }: { user: User }) {
 
       {shared.length > 0 && <div className="section">Общие</div>}
       {shared.map((d) => (
+        <Link key={d.id} href={`/dashboards/${d.id}`} className={active(`/dashboards/${d.id}`)} title={d.name}>
+          {d.name}
+        </Link>
+      ))}
+
+      {other.length > 0 && <div className="section">Другие дашборды</div>}
+      {other.map((d) => (
         <Link key={d.id} href={`/dashboards/${d.id}`} className={active(`/dashboards/${d.id}`)} title={d.name}>
           {d.name}
         </Link>
