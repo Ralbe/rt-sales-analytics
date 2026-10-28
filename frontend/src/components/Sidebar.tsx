@@ -57,6 +57,16 @@ export function Sidebar({ user }: { user: User }) {
         </Link>
       ))}
 
+      <div className="section">Отчёты</div>
+      <Link href="/reports/gallery" className={active("/reports/gallery")}>
+        Готовые отчёты
+      </Link>
+      {(user.role === "analyst" || user.role === "admin") && (
+        <Link href="/reports/new" className={active("/reports/new")}>
+          + Конструктор отчётов
+        </Link>
+      )}
+
       <div className="section">Проекты</div>
       <Link href="/projects" className={active("/projects")}>
         Список проектов
