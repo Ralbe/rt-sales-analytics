@@ -165,3 +165,24 @@ def test_register_rejects_invalid_filter_and_sort(as_user, params):
 
 def test_register_requires_authentication(client):
     assert client.get("/api/projects", params={"implementation_year": 2027}).status_code == 401
+
+
+@pytest.mark.parametrize("params", [
+    {"date_from": "2026-10-31", "date_to": "2026-10-01", "period_preset": "custom"},
+    {"date_from": "2026-02-30", "date_to": "2026-03-01", "period_preset": "custom"},
+    {"date_from": "2026-10-01"},
+    {"date_to": "2026-10-31"},
+    {"period_preset": "week"},
+    {"date_from": "2026-10-01", "date_to": "2026-10-31", "period_preset": "unknown"},
+    {"date_from": "1900-01-01", "date_to": "2101-01-01", "period_preset": "custom"},
+])
+def test_register_rejects_invalid_event_period(as_user, params):
+    response = as_user.get("/api/projects", params=params)
+    assert response.status_code == 422, response.text
+
+
+def test_event_period_keeps_project_scope_and_does_not_filter_projects(as_user, register):
+    params = {"q": PREFIX, "date_from": "2026-10-01", "date_to": "2026-10-31", "period_preset": "month"}
+    response = as_user.get("/api/projects", params=params)
+    assert response.status_code == 200, response.text
+    assert {item["id"] for item in response.json()["items"]} == {register[i].id for i in (0, 1, 2, 4)}
