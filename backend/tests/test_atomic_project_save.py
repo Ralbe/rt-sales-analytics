@@ -144,6 +144,8 @@ def test_failure_after_flush_rolls_back_everything(as_user, db, monkeypatch, ope
         )
     before = _counts(db)
     rows = [_finance(db, "cost", amount="5.678")]
+    if saved is not None:
+        rows[0]["id"] = saved["financial_entries"][0]["id"]
     payload = (
         legacy_payload(db, name="Откат атомарного сохранения", stage="won", financial_entries=rows)
         if scheme == "legacy" else _payload(db, name="Откат атомарного сохранения", financial_entries=rows)
@@ -162,7 +164,7 @@ def test_failure_after_flush_rolls_back_everything(as_user, db, monkeypatch, ope
         if args[2] == "replace_financial_entries":
             if failure == "database":
                 # Настоящая ошибка ограничения БД переводит сессию в состояние pending rollback.
-                next(row for row in db.new if isinstance(row, ProjectFinancialEntry)).amount = Decimal("-0.001")
+                db.get(ProjectFinancialEntry, kwargs["after"][0]["_row_id"]).amount = Decimal("-0.001")
                 return
             db.flush()
             assert _counts(db)[2] == before[2] + 2
@@ -224,6 +226,7 @@ def test_omitted_or_null_finances_preserve_existing_rows(as_user, db, financial_
 def test_update_replaces_all_rows_and_audits_card_and_finances(as_user, db, monkeypatch):
     saved = _create(as_user, db, financial_entries=[_finance(db, amount="1.234"), _finance(db, amount="2.345")])
     replacement = _finance(db, "cost", amount="0.001", vat_included=False, year=2027, month=1)
+    replacement["id"] = saved["financial_entries"][0]["id"]
     events = []
     commit = db.commit
 
@@ -261,7 +264,10 @@ def test_financial_only_change_updates_timestamp_and_preserves_creation(as_user,
     project = db.get(Project, saved["id"])
     project.updated_at = datetime(2020, 1, 1)
     db.commit()
-    rows = [_finance(db, amount="2.345")] if replacement == "changed" else []
+    rows = (
+        [_finance(db, amount="2.345") | {"id": saved["financial_entries"][0]["id"]}]
+        if replacement == "changed" else []
+    )
     response = as_user.put(f"/api/projects/{saved['id']}", json=_payload(db, financial_entries=rows))
     assert response.status_code == 200, response.text
     updated = response.json()
@@ -300,7 +306,10 @@ def test_noop_keeps_history_row_ids_and_timestamps(as_user, db, monkeypatch, fin
 def test_duplicate_financial_rows_are_counted_in_noop_comparison(as_user, db):
     row = _finance(db, amount="1.230")
     saved = _create(as_user, db, financial_entries=[row, row])
-    response = as_user.put(f"/api/projects/{saved['id']}", json=_payload(db, financial_entries=[row]))
+    response = as_user.put(
+        f"/api/projects/{saved['id']}",
+        json=_payload(db, financial_entries=[row | {"id": saved["financial_entries"][0]["id"]}]),
+    )
     assert response.status_code == 200, response.text
     assert len(response.json()["financial_entries"]) == 1
     assert len(_logs(db, saved["id"])) == 3

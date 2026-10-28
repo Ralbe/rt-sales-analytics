@@ -93,6 +93,29 @@ async function fillNewProject(page: Page) {
   await page.getByLabel(/Плановое закрытие/).fill("2026-12-31");
 }
 
+test("неактивные значения остаются в сохранённой карточке и передаются при сохранении", async ({ page }) => {
+  const state = await mockApi(page, {
+    ...LEGACY, payment_type: { id: 77, name: "Прежний платёж" },
+    financial_entries: [{ id: 88, kind: "cost", year: 2026, month: 10, amount: "15.000", vat_included: true,
+      status: { id: 90, name: "Прежний статус" }, article: { id: 91, name: "Прежняя статья" },
+      cost_type: { id: 92, name: "Прежний вид" } }],
+  });
+  await page.goto("/projects/42");
+  const payment = page.locator("#payment_type_id");
+  await expect(payment).toHaveValue("77");
+  await expect(payment.locator("option[value='77']")).toHaveText("Прежний платёж (неактивно)");
+  await expect(payment.locator("option[value='77']")).toBeDisabled();
+  const status = page.getByLabel("Статус затрат");
+  await expect(status).toHaveValue("90");
+  await expect(status.locator("option[value='90']")).toHaveText("Прежний статус (неактивно)");
+  await page.getByLabel("Суть проекта").fill("Новое описание");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect.poll(() => state.writes.length).toBe(1);
+  expect(state.writes[0]).toMatchObject({ payment_type_id: 77, financial_entries: [
+    { id: 88, status_id: 90, article_id: 91, cost_type_id: 92 },
+  ] });
+});
+
 test("новая карточка: один обязательный селект из 10 этапов, без legacy stage и ручной вероятности", async ({ page }) => {
   const state = await mockApi(page, null);
   await fillNewProject(page);

@@ -73,6 +73,7 @@ class Segment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=func.true())
 
 
 class Service(Base):
@@ -81,6 +82,7 @@ class Service(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     group_name: Mapped[str | None] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=func.true())
 
 
 class ReferenceValue(Base):

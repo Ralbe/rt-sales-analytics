@@ -25,6 +25,8 @@ export interface ServiceItem extends RefItem {
 export interface Refs {
   segments: RefItem[];
   services: ServiceItem[];
+  filter_segments?: (RefItem & { is_active: boolean })[];
+  filter_services?: (ServiceItem & { is_active: boolean })[];
   managers: ManagerItem[];
   stages: { id: Stage; name: string; probability: number }[];
   payment_types: RefItem[];

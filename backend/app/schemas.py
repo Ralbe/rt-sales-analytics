@@ -68,6 +68,14 @@ class ServiceItem(ORM):
     group_name: str | None = None
 
 
+class FilterRefItem(RefItem):
+    is_active: bool
+
+
+class FilterServiceItem(ServiceItem):
+    is_active: bool
+
+
 class StageItem(CodeItem):
     probability: int
 
@@ -81,6 +89,8 @@ class CustomerStageItem(ORM):
 class RefsOut(BaseModel):
     segments: list[RefItem]
     services: list[ServiceItem]
+    filter_segments: list[FilterRefItem]
+    filter_services: list[FilterServiceItem]
     managers: list[ManagerItem]
     stages: list[StageItem]
     payment_types: list[RefItem]
@@ -216,6 +226,7 @@ class ProjectOut(ORM):
 
 
 class ProjectFinancialEntryIn(BaseModel):
+    id: int | None = Field(default=None, ge=1)
     kind: Literal["revenue", "cost"]
     year: int = Field(ge=1900, le=2200)
     month: int = Field(ge=1, le=12)

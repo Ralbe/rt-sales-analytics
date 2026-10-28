@@ -191,13 +191,13 @@ def test_financial_history_is_exact_readable_and_ignores_noops(as_user, db):
         for field in ("status_id", "article_id", "cost_type_id"):
             if field in row:
                 assert db.get(ReferenceValue, row[field]).name in str(changes)
-    updated = [rows[0] | {"amount": "2.345"}, rows[1]]
+    updated = [rows[0] | {"id": ids[0], "amount": "2.345"}, rows[1] | {"id": ids[1]}]
     assert as_user.put(url, json=updated).status_code == 200
     changes = _history(as_user, project_id)["items"][0]["changes"]
-    assert len(changes) == 2
-    assert changes[0]["label"] == "Финансовая строка удалена"
+    assert len(changes) == 1
+    assert changes[0]["label"] == "Финансовая строка изменена"
     assert "123 456 789 012,123" in changes[0]["before"]
-    assert "2,345" in changes[1]["after"]
+    assert "2,345" in changes[0]["after"]
     assert as_user.put(url, json=[]).status_code == 200
     assert all(row["after"] == "Строка отсутствует" for row in _history(as_user, project_id)["items"][0]["changes"])
 

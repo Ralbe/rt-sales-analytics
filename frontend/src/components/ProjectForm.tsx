@@ -295,7 +295,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       realized_work: v.realized_work,
       period_plan: v.period_plan,
       financial_entries: financialEntries.map((entry) => ({
-        kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
+        id: entry.id ?? null, kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
@@ -419,6 +419,8 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <label htmlFor="service_id">{label("service_id")} {req}</label>
                 <select id="service_id" className="select" {...register("service_id")}>
                   <option value="">— выберите —</option>
+                  {project?.service && !refs?.services.some((item) => item.id === project.service.id) &&
+                    <option value={project.service.id} disabled>{project.service.name} (неактивно)</option>}
                   {refs?.services.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.group_name ? `${s.group_name} — ${s.name}` : s.name}
@@ -459,6 +461,8 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <label htmlFor="payment_type_id">{label("payment_type_id")}</label>
                 <select id="payment_type_id" className="select" {...register("payment_type_id")}>
                   <option value="">— не указан —</option>
+                  {project?.payment_type && !refs?.payment_types.some((item) => item.id === project.payment_type?.id) &&
+                    <option value={project.payment_type.id} disabled>{project.payment_type.name} (неактивно)</option>}
                   {refs?.payment_types.map((item) => (
                     <option key={item.id} value={item.id}>{item.name}</option>
                   ))}
@@ -469,6 +473,8 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <label htmlFor="indicator_id">{label("indicator_id")}</label>
                 <select id="indicator_id" className="select" {...register("indicator_id")}>
                   <option value="">— не указан —</option>
+                  {project?.indicator && !refs?.project_indicators.some((item) => item.id === project.indicator?.id) &&
+                    <option value={project.indicator.id} disabled>{project.indicator.name} (неактивно)</option>}
                   {refs?.project_indicators.map((item) => (
                     <option key={item.id} value={item.id}>{item.name}</option>
                   ))}
@@ -486,6 +492,8 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                   {...register("customer_stage_id", { onChange: (e) => onCustomerStageChange(e.target.value) })}
                 >
                   <option value="">— выберите этап —</option>
+                  {project?.customer_stage && !refs?.customer_stages.some((item) => item.id === project.customer_stage?.id) &&
+                    <option value={project.customer_stage.id} disabled>{project.customer_stage.name} (неактивно)</option>}
                   {refs?.customer_stages.map((item) => (
                     <option key={item.id} value={item.id}>{item.name} ({item.probability}%)</option>
                   ))}
@@ -530,6 +538,8 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <label htmlFor="assessment_status_id">{label("assessment_status_id")}</label>
                 <select id="assessment_status_id" className="select" {...register("assessment_status_id")}>
                   <option value="">— не указан —</option>
+                  {project?.assessment_status && !refs?.assessment_statuses.some((item) => item.id === project.assessment_status?.id) &&
+                    <option value={project.assessment_status.id} disabled>{project.assessment_status.name} (неактивно)</option>}
                   {refs?.assessment_statuses.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
@@ -699,16 +709,16 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
               <option value="yes">С НДС</option><option value="no">Без НДС</option>
             </select>
             {entry.kind === "revenue" ? <select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.revenue_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
-              <option value="">{label("financial_entries.revenue_status")}</option>{refs?.revenue_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              <option value="">{label("financial_entries.revenue_status")}</option>{entry.status && entry.status_id === entry.status.id && !refs?.revenue_statuses.some((x) => x.id === entry.status?.id) && <option value={entry.status.id} disabled>{entry.status.name} (неактивно)</option>}{refs?.revenue_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
             </select> : <>
               <select className="select" value={entry.article_id ?? ""} aria-label={label("financial_entries.article_id")} onChange={(e) => set({ article_id: Number(e.target.value) })}>
-                <option value="">{label("financial_entries.article_id")}</option>{refs?.cost_articles.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                <option value="">{label("financial_entries.article_id")}</option>{entry.article && entry.article_id === entry.article.id && !refs?.cost_articles.some((x) => x.id === entry.article?.id) && <option value={entry.article.id} disabled>{entry.article.name} (неактивно)</option>}{refs?.cost_articles.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
               <select className="select" value={entry.cost_type_id ?? ""} aria-label={label("financial_entries.cost_type_id")} onChange={(e) => set({ cost_type_id: Number(e.target.value) })}>
-                <option value="">{label("financial_entries.cost_type_id")}</option>{refs?.cost_types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                <option value="">{label("financial_entries.cost_type_id")}</option>{entry.cost_type && entry.cost_type_id === entry.cost_type.id && !refs?.cost_types.some((x) => x.id === entry.cost_type?.id) && <option value={entry.cost_type.id} disabled>{entry.cost_type.name} (неактивно)</option>}{refs?.cost_types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
               <select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.cost_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
-                <option value="">{label("financial_entries.cost_status")}</option>{refs?.cost_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                <option value="">{label("financial_entries.cost_status")}</option>{entry.status && entry.status_id === entry.status.id && !refs?.cost_statuses.some((x) => x.id === entry.status?.id) && <option value={entry.status.id} disabled>{entry.status.name} (неактивно)</option>}{refs?.cost_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
             </>}
             <button type="button" className="btn" onClick={() => setFinancialEntries((items) => items.filter((_, i) => i !== index))}>Удалить</button>

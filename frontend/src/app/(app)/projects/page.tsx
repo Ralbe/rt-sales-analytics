@@ -11,6 +11,7 @@ import { api, toQuery } from "@/lib/api";
 import { date } from "@/lib/format";
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
+import { segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
 import type { ProjectPage, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 20;
@@ -130,8 +131,8 @@ export default function ProjectsPage() {
         />
         {refs && (
           <div className="filters">
-            <MultiSelect label={filterLabel("segment", "Сегменты")} options={refs.segments} value={segments} onChange={withReset(setSegments)} />
-            <MultiSelect label={filterLabel("service_id", "Услуги")} options={refs.services} value={services} onChange={withReset(setServices)} />
+            <MultiSelect label={filterLabel("segment", "Сегменты")} options={segmentFilterOptions(refs)} value={segments} onChange={withReset(setSegments)} />
+            <MultiSelect label={filterLabel("service_id", "Услуги")} options={serviceFilterOptions(refs)} value={services} onChange={withReset(setServices)} />
             {seesAllProjects(me?.role) && (
               <MultiSelect
                 label={filterLabel("manager_id", "Менеджеры")}
