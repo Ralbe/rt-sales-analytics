@@ -17,6 +17,7 @@ celery_app.conf.update(
     beat_schedule={
         "warm-analytics-cache": {"task": "app.worker.warm_analytics_cache", "schedule": 600.0},
         "reset-analytics-cache-daily": {"task": "app.worker.reset_analytics_cache", "schedule": 86400.0},
+        "cleanup-report-snapshots": {"task": "app.worker.cleanup_report_snapshots", "schedule": 300.0},
     },
 )
 
@@ -42,3 +43,13 @@ def warm_analytics_cache() -> None:
 @celery_app.task
 def reset_analytics_cache() -> None:
     cache.bump("analytics")
+
+
+@celery_app.task
+def cleanup_report_snapshots() -> None:
+    """Удаляет истёкшие снимки каждые пять минут при работающих worker и beat."""
+    from app.services.report_builder import cleanup
+
+    with SessionLocal() as db:
+        cleanup(db)
+        db.commit()
