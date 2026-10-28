@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { SESSION_EXPIRED_EVENT } from "@/lib/api";
+import { SESSION_EXPIRED_EVENT, api } from "@/lib/api";
 import { useMe, useRefs } from "@/lib/hooks";
 import { useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
-import type { FinancialEntry, Project, RefItem, Refs } from "@/lib/types";
+import type { FinancialEntry, Project, RefItem, Refs, User } from "@/lib/types";
 
 import "./ProjectPrint.css";
 
@@ -51,6 +51,7 @@ type TextField = { [K in keyof Project]: Project[K] extends string | number | nu
 type Row = Readonly<{ key: keyof Labels; label: string; value: string }>;
 type FinancialRow = Readonly<{ period: string; amount: string; vat: string; status: string; article: string; costType: string; details: readonly Row[] }>;
 interface Snapshot {
+  readonly id: number;
   readonly name: string;
   readonly generatedAt: string;
   readonly completionNote: string | null;
@@ -98,6 +99,7 @@ function makeSnapshot(project: Project, refs: Refs, labels: Labels): Snapshot {
     };
   };
   return {
+    id: project.id,
     name: project.name,
     generatedAt: timestamp(Date.now()),
     completionNote: project.stage_scheme === "customer" ? "Состояние завершения: не определено" : null,
@@ -144,13 +146,14 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
   const [error, setError] = useState<string | null>(null);
   const surface = useRef<HTMLElement>(null);
   const running = useRef(false);
+  const attempt = useRef(0);
   const revoked = useRef(false);
   const invalid = failed || !project || !refs.data || !me.data || refs.isError || me.isError || revoked.current;
   const blocked = invalid || pending || refs.fetchStatus !== "idle" || me.fetchStatus !== "idle";
   const allowed = useRef(false);
   allowed.current = !invalid;
 
-  const finish = () => { running.current = false; setSnapshot(null); setPhase("idle"); };
+  const finish = () => { attempt.current++; running.current = false; setSnapshot(null); setPhase("idle"); };
 
   useEffect(() => {
     setTarget(document.body);
@@ -174,7 +177,12 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
     };
   }, []);
 
-  useEffect(() => { if (invalid && snapshot) finish(); }, [invalid, snapshot]);
+  useEffect(() => {
+    if (invalid && running.current) {
+      finish();
+      setError("Печать недоступна: данные или доступ изменились. Обновите страницу и повторите попытку.");
+    }
+  }, [invalid]);
 
   useEffect(() => {
     if (!snapshot || phase !== "preparing" || invalid) return;
@@ -204,17 +212,35 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
   }, [snapshot, phase, invalid]);
 
-  const print = () => {
+  const print = async () => {
     if (blocked || revoked.current || running.current || !project || !refs.data) return;
     running.current = true;
+    const request = ++attempt.current;
     setError(null);
+    setPhase("preparing");
     const labels: Labels = { ...PROJECT_PRINT_LABELS };
     for (const [printKey, fieldKey] of Object.entries(LABEL_KEYS) as [keyof Labels, ProjectFieldKey][]) {
       labels[printKey] = ["created_at", "updated_at"].includes(fieldKey)
         ? configuredLabels.label(fieldKey) : configuredLabels.heading(fieldKey);
     }
-    setSnapshot(makeSnapshot(project, refs.data, { ...labels, ...overrides }));
-    setPhase("preparing");
+    try {
+      const [saved, currentUser] = await Promise.all([
+        api<Project>(`/projects/${project.id}`, { cache: "no-store" }),
+        api<User>("/auth/me", { cache: "no-store" }),
+      ]);
+      if (currentUser.id !== me.data?.id || currentUser.role !== me.data.role) throw new Error("Доступ изменился");
+      if (request !== attempt.current || !running.current || revoked.current) return;
+      if (!allowed.current) {
+        finish();
+        setError("Печать недоступна: данные или доступ изменились. Обновите страницу и повторите попытку.");
+        return;
+      }
+      setSnapshot(makeSnapshot(saved, refs.data, { ...labels, ...overrides }));
+    } catch {
+      if (request !== attempt.current) return;
+      setError("Печать недоступна: не удалось проверить доступ к сохранённому проекту. Обновите страницу и повторите попытку.");
+      finish();
+    }
   };
   const current = invalid ? null : snapshot;
 
@@ -237,6 +263,7 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
               <h1>{current.name}</h1>
               <p>{current.labels.generated_at}: {current.generatedAt}</p>
               <p>Снимок сохранённых данных. Несохранённые изменения формы не включены.</p>
+              <p>Область данных: выбранный проект № {current.id}. Финансовые строки: выручка — {current.revenue.length}, затраты — {current.costs.length}.</p>
               {current.completionNote && <p data-completion-state="unknown">{current.completionNote}</p>}
             </header>
             {current.sections.map((section) => <section key={section.title}>

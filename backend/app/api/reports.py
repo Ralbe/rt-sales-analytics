@@ -18,6 +18,7 @@ from app.report_schemas import (
     ReportInput,
     ReportUpdate,
     RunInput,
+    SnapshotPage,
 )
 from app.services import audit
 from app.services import report_builder as builder
@@ -292,7 +293,7 @@ def snapshot(db, user, snapshot_id):
     return item
 
 
-@router.get("/report-snapshots/{snapshot_id}")
+@router.get("/report-snapshots/{snapshot_id}", response_model=SnapshotPage)
 def page(
     snapshot_id: str,
     response: Response,
@@ -313,6 +314,7 @@ def page(
         "limit": limit,
         "expires_at": item.expires_at,
         "report_version": item.report_version,
+        "metadata": item.print_metadata,
     }
 
 

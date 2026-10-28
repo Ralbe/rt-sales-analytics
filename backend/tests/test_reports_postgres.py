@@ -336,6 +336,12 @@ def test_global_quota_between_different_users(report_engine, report_api, monkeyp
 
 
 def test_migration_refuses_to_drop_existing_reports(report_engine):
+    from sqlalchemy import delete
+
+    # Проверяем именно защиту шаблонов после отдельной защиты метаданных снимков.
+    with Session(report_engine) as db:
+        db.execute(delete(ReportSnapshot))
+        db.commit()
     backend = Path(__file__).resolve().parents[1]
     config = Config(str(backend / "alembic.ini"))
     config.set_main_option("script_location", str(backend / "alembic"))
@@ -362,3 +368,35 @@ def test_empty_migration_downgrade_and_upgrade(report_engine):
         assert "report_definitions" not in inspect(report_engine).get_table_names()
         command.upgrade(config, "head")
         command.check(config)
+
+
+def test_print_metadata_migration_preserves_old_snapshots_and_guards_downgrade(report_engine, report_api):
+    from sqlalchemy import delete
+
+    request, _, _ = report_api
+    with Session(report_engine) as db:
+        db.execute(delete(ReportSnapshot))
+        db.commit()
+    spec = {"grain": "project", "columns": ["project.id"], "filters": [], "sort": []}
+    result = request("analyst@example.com", "POST", "/api/reports/preview", {"definition": spec})
+    assert result.status_code == 200
+    sid = result.json()["snapshot_id"]
+    backend = Path(__file__).resolve().parents[1]
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("script_location", str(backend / "alembic"))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(settings, "database_url", report_engine.url.render_as_string(hide_password=False))
+        with pytest.raises(RuntimeError, match="метаданные снимков"):
+            command.downgrade(config, "0011")
+        before = request("analyst@example.com", "GET", f"/api/report-snapshots/{sid}").json()
+        with Session(report_engine) as db:
+            db.get(ReportSnapshot, sid).print_metadata = None
+            db.commit()
+        command.downgrade(config, "0011")
+        command.upgrade(config, "head")
+        command.check(config)
+        after = request("analyst@example.com", "GET", f"/api/report-snapshots/{sid}").json()
+        assert after["metadata"] is None
+        assert after["rows"] == before["rows"]
+        assert after["columns"] == before["columns"]
+        assert after["title"] == before["title"]

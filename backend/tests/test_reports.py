@@ -56,6 +56,7 @@ def test_private_public_scope_and_revocation(client, db):
     rows = client.get(f"/api/report-snapshots/{sid}").json()["rows"]
     assert rows
     assert client.get(f"/api/report-snapshots/{sid}/export").status_code == 403
+    assert client.get(f"/api/report-snapshots/{sid}").json()["metadata"]["scope"] == "own"
     own = set(db.scalars(select(Project.id).where(Project.manager_id == manager.id, Project.archived_at.is_(None))))
     assert {row["project.id"] for row in rows} <= own
     client.post("/api/auth/logout")
@@ -232,6 +233,40 @@ def test_renamed_heading_is_frozen_with_snapshot(as_analyst, db):
     assert page["columns"][1]["label"] == "Особое название"
     workbook = load_workbook(BytesIO(as_analyst.get(f"/api/report-snapshots/{sid}/export").content))
     assert workbook.active["B1"].value == "Особое название"
+
+
+def test_snapshot_freezes_filters_labels_and_scope(as_analyst, db):
+    from app.models import ProjectFieldLabel
+
+    db.add(ProjectFieldLabel(key="name", label="Имя на момент запуска"))
+    db.flush()
+    spec = definition(filters=[{"field": "project.name", "operator": "contains", "value": "Длинное значение"},
+                               {"field": "project.stage", "operator": "eq", "value": "lead"}])
+    report = create(as_analyst, spec)
+    sid = as_analyst.post(f"/api/reports/{report['id']}/run", json={"version": 1}).json()["snapshot_id"]
+    before = as_analyst.get(f"/api/report-snapshots/{sid}").json()
+    assert before["metadata"]["filters"] == [
+        {"field": "project.name", "label": "Имя на момент запуска", "operator": "contains",
+         "value": "Длинное значение", "value_label": "Длинное значение"},
+        {"field": "project.stage", "label": "Стадия системы", "operator": "eq", "value": "lead", "value_label": "Лид"},
+    ]
+    assert before["metadata"]["scope"] == "all_available"
+    assert before["metadata"]["max_rows"] == 10000
+    db.get(ProjectFieldLabel, "name").label = "Новая подпись"
+    db.flush()
+    as_analyst.put(f"/api/reports/{report['id']}", json={"title": "Новый", "definition": definition(), "version": 1})
+    after = as_analyst.get(f"/api/report-snapshots/{sid}").json()
+    assert after["metadata"] == before["metadata"]
+    assert after["title"] == "Отчёт"
+
+
+def test_legacy_snapshot_has_no_invented_filter_metadata(as_analyst, db):
+    from app.models import ReportSnapshot
+
+    sid = as_analyst.post("/api/reports/preview", json={"definition": definition()}).json()["snapshot_id"]
+    db.get(ReportSnapshot, sid).print_metadata = None
+    db.flush()
+    assert as_analyst.get(f"/api/report-snapshots/{sid}").json()["metadata"] is None
 
 
 def test_finance_grain_preserves_rows_and_snapshot_export(as_analyst, db):

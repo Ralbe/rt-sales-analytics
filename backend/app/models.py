@@ -265,6 +265,7 @@ class ReportSnapshot(Base):
     columns: Mapped[list] = mapped_column(JSON)
     rows: Mapped[list] = mapped_column(JSON)
     project_ids: Mapped[list] = mapped_column(JSON)
+    print_metadata: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
 
 
 class ReportSnapshotQuota(Base):

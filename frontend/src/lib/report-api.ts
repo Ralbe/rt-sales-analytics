@@ -5,7 +5,8 @@ export type ReportField = { id: string; label: string; type: string; grains: Gra
 export type ReportDefinition = { grain: Grain; columns: string[]; filters: { field: string; operator: string; value: unknown }[]; sort: { field: string; direction: "asc" | "desc" }[] };
 export type Report = { id: number; title: string; owner_id: number; definition: ReportDefinition; published: boolean; version: number; created_at: string; updated_at: string };
 export type Snapshot = { snapshot_id: string; title: string; total: number; expires_at: string };
-export type SnapshotPage = Snapshot & { columns: { id: string; label: string; type: string }[]; rows: Record<string, unknown>[]; offset: number; limit: number };
+export type SnapshotMetadata = { filters: { field: string; label: string; operator: string; value: string | number | boolean; value_label: string | number | boolean }[]; scope: "own" | "all_available"; grain: Grain; max_rows: number; max_bytes: number };
+export type SnapshotPage = Snapshot & { columns: { id: string; label: string; type: string }[]; rows: Record<string, unknown>[]; offset: number; limit: number; metadata?: SnapshotMetadata | null };
 export const emptyDefinition = (): ReportDefinition => ({ grain: "project", columns: [], filters: [], sort: [] });
 export const reports = {
   fields: () => api<{ fields: ReportField[] }>("/report-fields"),

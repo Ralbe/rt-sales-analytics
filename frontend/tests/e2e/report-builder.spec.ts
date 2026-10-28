@@ -196,6 +196,132 @@ test("заголовок снимка сохраняется на экране �
   await expect(page.getByRole("heading", { name: "Отчёт на момент запуска" })).toBeVisible(); await page.getByRole("button", { name: "PDF / Печать всех строк" }).click(); await expect(page.locator("body")).toHaveAttribute("data-print-title", "Отчёт на момент запуска");
 });
 
+test("печать показывает фильтры, ограничения и область доступа из снимка", async ({ page }) => {
+  await setup(page);
+  await page.route("**/api/report-snapshots/snap-1?*", async (route) => {
+    const url = new URL(route.request().url());
+    await route.fulfill({ json: { snapshot_id: "snap-1", title: "Прежний отчёт", columns: [{ id: "project.name", label: "Старая подпись", type: "string" }], rows: [{ "project.name": "Мой проект" }], total: 1, offset: Number(url.searchParams.get("offset")), limit: Number(url.searchParams.get("limit")), expires_at: expires, metadata: { filters: [{ field: "project.name", label: "Прежний фильтр", operator: "eq", value: "Мой проект", value_label: "Мой проект" }], scope: "own", grain: "project", max_rows: 10000, max_bytes: 10485760 } } });
+  });
+  await page.addInitScript(() => { window.print = () => { document.body.dataset.printText = document.querySelector(".report-print-surface")?.textContent ?? ""; }; });
+  await page.goto("/reports/snapshots/snap-1");
+  await page.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+  await expect(page.locator("body")).toHaveAttribute("data-print-text", /Прежний фильтр.*Мой проект/);
+  await expect(page.locator("body")).toHaveAttribute("data-print-text", /Только свои проекты/);
+  await expect(page.locator("body")).toHaveAttribute("data-print-text", /10\s?000/);
+  await expect(page.locator("body")).toHaveAttribute("data-print-text", /Дата печати/);
+});
+
+test("истечение сессии во время загрузки страниц отменяет печать", async ({ page }) => {
+  await setup(page, { total: 250 });
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let waiting = false;
+  await page.route("**/api/report-snapshots/snap-1?*", async (route) => {
+    const url = new URL(route.request().url());
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    if (offset === 200) { waiting = true; await gate; }
+    await route.fulfill({ json: { snapshot_id: "snap-1", title: "Отчёт", columns: [{ id: "project.name", label: "Проект", type: "string" }], rows: Array.from({ length: Math.min(limit, 250 - offset) }, (_, i) => ({ "project.name": `Строка ${offset + i}` })), total: 250, offset, limit, expires_at: expires } });
+  });
+  await page.addInitScript(() => { window.print = () => { document.body.dataset.printed = "yes"; }; });
+  await page.goto("/reports/snapshots/snap-1");
+  await page.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+  await expect.poll(() => waiting).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("session-expired")));
+  release();
+  await expect(page.locator(".report-print-surface")).toHaveCount(0);
+  await expect(page.locator("body")).not.toHaveAttribute("data-printed", "yes");
+});
+
+for (const total of [0, 250]) for (const status of [401, 403, 404]) test(`отзыв ${status} после последней страницы отменяет печать: ${total} строк`, async ({ page }) => {
+  await setup(page, { total });
+  await page.route("**/api/report-snapshots/snap-1?*", (route) => {
+    const url = new URL(route.request().url());
+    return url.searchParams.get("limit") === "1"
+      ? route.fulfill({ status, json: { detail: "Доступ отозван" } })
+      : route.fallback();
+  });
+  await page.addInitScript(() => { window.print = () => { document.body.dataset.printed = "yes"; }; });
+  await page.goto("/reports/snapshots/snap-1");
+  await page.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+  if (status !== 401) await expect(page.getByRole("alert").filter({ hasText: status === 403 ? "нет прав" : "недоступен" })).toBeVisible();
+  else await expect(page).toHaveURL(/\/login/);
+  await expect(page.locator(".report-print-surface")).toHaveCount(0);
+  await expect(page.locator("body")).not.toHaveAttribute("data-printed", "yes");
+});
+
+test("повторный beforeprint без новой проверки закрывает поверхность снимка", async ({ page }) => {
+  await setup(page, { total: 1 });
+  await page.addInitScript(() => { window.print = () => { document.body.dataset.printed = "yes"; }; });
+  await page.goto("/reports/snapshots/snap-1");
+  await page.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+  await expect(page.locator("body")).toHaveAttribute("data-printed", "yes");
+  await page.evaluate(() => window.dispatchEvent(new Event("beforeprint")));
+  await expect(page.locator(".report-print-surface")).toHaveAttribute("data-ready", "false");
+});
+
+test("пока финальная проверка ожидает ответ, Ctrl+P не раскрывает строки", async ({ page }) => {
+  await setup(page, { total: 1 });
+  let release = () => {}; let waiting = false;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/report-snapshots/snap-1?*", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("limit") !== "1") return route.fallback();
+    waiting = true; await gate;
+    return route.fulfill({ status: 404, json: { detail: "Доступ отозван" } });
+  });
+  await page.goto("/reports/snapshots/snap-1");
+  await page.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+  await expect.poll(() => waiting).toBe(true);
+  const surface = page.locator(".report-print-surface");
+  await expect(surface).toHaveAttribute("data-ready", "false");
+  await page.evaluate(() => window.dispatchEvent(new Event("beforeprint")));
+  await page.emulateMedia({ media: "print" });
+  await expect(surface.locator("tbody")).toBeHidden();
+  release();
+  await expect(surface).toHaveCount(0);
+});
+
+test("ошибка обновления снимка освобождает кнопку и старый ответ не отменяет новую печать", async ({ page }) => {
+  await setup(page, { total: 1 });
+  let release = () => {}; let waiting = false; let finished = false; let checks = 0; let failPage = false;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/report-snapshots/snap-1?*", async (route) => {
+    const limit = new URL(route.request().url()).searchParams.get("limit");
+    if (limit === "100" && failPage) return route.fulfill({ status: 503, json: { detail: "Ошибка обновления" } });
+    if (limit !== "1" || ++checks !== 1) return route.fallback();
+    waiting = true; await gate;
+    await route.fulfill({ status: 404, json: { detail: "Старый доступ отозван" } });
+    finished = true;
+  });
+  await page.addInitScript(() => { window.print = () => { document.body.dataset.printed = "yes"; }; });
+  await page.goto("/reports/snapshots/snap-1");
+  await page.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+  await expect.poll(() => waiting).toBe(true);
+  failPage = true;
+  await page.evaluate(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
+  await expect(page.getByRole("alert").filter({ hasText: "Не удалось загрузить снимок" })).toBeVisible();
+  failPage = false;
+  await page.getByRole("button", { name: "Повторить" }).click();
+  const printButton = page.getByRole("button", { name: "PDF / Печать всех строк" });
+  await expect(printButton).toBeEnabled();
+  await printButton.click();
+  await expect(page.locator("body")).toHaveAttribute("data-printed", "yes");
+  release();
+  await expect.poll(() => finished).toBe(true);
+  await expect(page.locator(".report-print-surface")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "недоступен" })).toHaveCount(0);
+});
+
+test("ошибка диалога печати освобождает снимок и позволяет повторить", async ({ page }) => {
+  await setup(page, { total: 1 });
+  await page.addInitScript(() => { window.print = () => { throw new Error("Ошибка печати"); }; });
+  await page.goto("/reports/snapshots/snap-1");
+  await page.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Браузер не смог открыть печать" })).toBeVisible();
+  await expect(page.locator(".report-print-surface")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "PDF / Печать всех строк" })).toBeEnabled();
+});
+
 test("пустое название предпросмотра имеет нейтральный заголовок", async ({ page }) => {
   await setup(page); await page.route("**/api/report-snapshots/snap-1?*", async (route) => { const url = new URL(route.request().url()); return route.fulfill({ json: { snapshot_id: "snap-1", title: "", columns: [{ id: "project.name", label: "Проект", type: "string" }], rows: [], total: 0, offset: Number(url.searchParams.get("offset")), limit: Number(url.searchParams.get("limit")), expires_at: expires } }); });
   await page.addInitScript(() => { window.print = () => { document.body.dataset.printTitle = document.querySelector(".report-print-surface h1")?.textContent ?? ""; }; }); await page.goto("/reports/snapshots/snap-1"); await expect(page.getByRole("heading", { name: "Предпросмотр отчёта" })).toBeVisible(); await page.getByRole("button", { name: "PDF / Печать всех строк" }).click(); await expect(page.locator("body")).toHaveAttribute("data-print-title", "Предпросмотр отчёта");
