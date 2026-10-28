@@ -192,7 +192,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
           )}
         </div>
         <div className="spacer" />
-        <DashboardPrint name={name} widgets={widgets} filters={filters} />
+        <DashboardPrint id={dashboard.id} name={name} widgets={widgets} filters={filters} />
         {error && <span className="alert">{error}</span>}
         {editable ? (
           <>

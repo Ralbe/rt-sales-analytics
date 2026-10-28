@@ -30,7 +30,7 @@ function totp(secret: string): string {
 }
 
 // Настоящий API и PostgreSQL из E2E CI; маршруты запросов не подменяются.
-test("M-01 и M-02: отчёт от конструктора до витрины, снимка, XLSX и печати", async ({ page }, testInfo) => {
+test("M-01 и M-02: отчёт от конструктора до витрины, снимка, XLSX и печати", async ({ page, browser }, testInfo) => {
   test.setTimeout(120_000);
   const email = process.env.E2E_EMAIL;
   const password = process.env.E2E_PASSWORD;
@@ -58,6 +58,7 @@ test("M-01 и M-02: отчёт от конструктора до витрины
   let projectId: number | undefined;
   let reportId: number | undefined;
   let snapshotId: string | undefined;
+  let userProjectId: number | undefined;
   try {
     const [refsResponse, clientsResponse, fieldsResponse] = await Promise.all([
       page.request.get("/api/refs"), page.request.get("/api/clients?limit=1"), page.request.get("/api/report-fields"),
@@ -69,6 +70,7 @@ test("M-01 и M-02: отчёт от конструктора до витрины
     const clients = await clientsResponse.json() as { id: number }[];
     const fields = await fieldsResponse.json() as { fields: { id: string; label: string; operators: string[] }[] };
     const projectField = fields.fields.find((field) => field.id === "project.name");
+    const idField = fields.fields.find((field) => field.id === "project.id");
     expect(projectField).toBeDefined();
     expect(projectField!.operators).toContain("eq");
     expect(clients.length && refs.services.length && refs.customer_stages.length).toBeGreaterThan(0);
@@ -84,6 +86,7 @@ test("M-01 и M-02: отчёт от конструктора до витрины
     await page.getByRole("navigation").getByRole("link", { name: "+ Конструктор отчётов" }).click();
     await expect(page.getByRole("heading", { name: "Новый табличный отчёт" })).toBeVisible();
     await page.getByLabel("Название отчёта").fill(title);
+    await page.getByLabel(idField!.label, { exact: true }).check();
     await page.getByLabel(projectField!.label, { exact: true }).check();
     await page.getByRole("button", { name: "Добавить фильтр" }).click();
     await page.getByLabel("Поле фильтра 1").selectOption("project.name");
@@ -96,7 +99,7 @@ test("M-01 и M-02: отчёт от конструктора до витрины
     const saved = await savedResponse.json() as { id: number; version: number; published: boolean; title: string; definition: unknown };
     reportId = saved.id;
     expect(saved).toMatchObject({ title, published: false, definition: {
-      grain: "project", columns: ["project.name"], filters: [{ field: "project.name", operator: "eq", value: projectName }],
+      grain: "project", columns: ["project.id", "project.name"], filters: [{ field: "project.name", operator: "eq", value: projectName }],
     } });
     await page.waitForURL((url) => url.pathname === `/reports/${reportId}`);
     await page.reload();
@@ -156,19 +159,69 @@ test("M-01 и M-02: отчёт от конструктора до витрины
     // openpyxl уже установлен для backend в CI: проверяем содержимое, а не только ZIP-сигнатуру.
     const script = "import json,openpyxl,sys; w=openpyxl.load_workbook(sys.argv[1],read_only=True,data_only=True); print(json.dumps(list(w.active.values))); w.close()";
     const { stdout } = await runFile("python", ["-c", script, downloadPath]);
-    expect(JSON.parse(stdout)).toEqual([[projectField!.label], [projectName]]);
+    expect(JSON.parse(stdout)).toEqual([[idField!.label, projectField!.label], [projectId, projectName]]);
+
+    // Шаблон меняется после запуска; снимок и его условия должны остаться прежними.
+    const changedDefinition = { grain: "project", columns: ["project.id"], filters: [], sort: [] };
+    const changed = await page.request.put(`/api/reports/${reportId}`, { data: { title: "Изменённый шаблон", definition: changedDefinition, version: saved.version + 1 } });
+    expect(changed.status()).toBe(200);
 
     // Перехват диалога печати не подменяет API или печатную поверхность.
     await page.evaluate(() => { window.print = () => { document.body.dataset.reportPrintCalled = "yes"; }; });
     await main.getByRole("button", { name: "PDF / Печать всех строк" }).click();
     const printSurface = page.locator(".report-print-surface");
     await expect(printSurface.getByRole("cell", { name: projectName, exact: true })).toBeVisible();
+    await expect(printSurface.getByRole("cell", { name: String(projectId), exact: true })).toBeVisible();
+    await expect(printSurface).toContainText(title);
+    await expect(printSurface).toContainText(`${projectField!.label}: равно «${projectName}»`);
+    await expect(printSurface).not.toContainText("Изменённый шаблон");
     await expect(page.locator("body")).toHaveAttribute("data-report-print-called", "yes");
     await page.emulateMedia({ media: "print" });
     const pdf = await page.pdf({ path: testInfo.outputPath("report-live.pdf"), format: "A4", printBackground: true });
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
     await page.emulateMedia({ media: "screen" });
     await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+
+    // Реальная учётная запись с TOTP видит в опубликованном отчёте только свои проекты.
+    const userEmail = `print-${suffix}@example.test`;
+    const userPassword = `Print-${suffix}-2026`;
+    const userResult = await page.request.post("/api/users", { data: { email: userEmail, full_name: "Пользователь печати", role: "user", password: userPassword } });
+    expect(userResult.status()).toBe(201);
+    const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+    try {
+      const userPage = await context.newPage();
+      const login = await userPage.request.post("/api/auth/login", { data: { email: userEmail, password: userPassword } });
+      expect(login.status()).toBe(200);
+      const challenge = await login.json() as { mfa_token: string; secret: string };
+      expect((await userPage.request.post("/api/auth/2fa", { data: { mfa_token: challenge.mfa_token, code: totp(challenge.secret) } })).status()).toBe(200);
+      const ownProject = await userPage.request.post("/api/projects", { data: {
+        name: `Личный проект ${suffix}`, client_id: clients[0].id, service_id: refs.services[0].id,
+        customer_stage_id: refs.customer_stages[0].id, amount: "50.00", cost: "0.00",
+        start_date: today, expected_close_date: today,
+      } });
+      expect(ownProject.status()).toBe(201);
+      userProjectId = (await ownProject.json() as { id: number }).id;
+      const userRun = await userPage.request.post(`/api/reports/${reportId}/run`, { data: { version: saved.version + 2 } });
+      expect(userRun.status()).toBe(200);
+      const userSnapshot = (await userRun.json() as { snapshot_id: string }).snapshot_id;
+      const userRows = await (await userPage.request.get(`/api/report-snapshots/${userSnapshot}`)).json() as { rows: { "project.id": number }[]; metadata: { scope: string } };
+      expect(userRows.metadata.scope).toBe("own");
+      expect(userRows.rows.map((row) => row["project.id"])).toEqual([userProjectId]);
+      await userPage.goto(`/reports/snapshots/${userSnapshot}`);
+      await userPage.evaluate(() => { window.print = () => { document.body.dataset.reportPrintCalled = "yes"; }; });
+      await userPage.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+      await expect(userPage.locator(".report-print-surface")).toContainText("Только свои проекты");
+      await expect(userPage.locator(".report-print-surface").getByRole("cell", { name: String(userProjectId), exact: true })).toBeVisible();
+      await expect(userPage.locator(".report-print-surface").getByRole("cell", { name: String(projectId), exact: true })).toHaveCount(0);
+      await userPage.evaluate(() => { window.dispatchEvent(new Event("afterprint")); delete document.body.dataset.reportPrintCalled; });
+      expect((await page.request.post(`/api/reports/${reportId}/publish`, { data: { version: saved.version + 2, published: false } })).status()).toBe(200);
+      await userPage.getByRole("button", { name: "PDF / Печать всех строк" }).click();
+      await expect(userPage.getByRole("alert").filter({ hasText: "недоступен" })).toBeVisible();
+      await expect(userPage.locator("body")).not.toHaveAttribute("data-report-print-called", "yes");
+      expect((await userPage.request.delete(`/api/report-snapshots/${userSnapshot}`)).status()).toBe(204);
+    } finally {
+      await context.close();
+    }
   } finally {
     // Удаляются только созданные этим сценарием сущности; проект переводится в архив.
     if (snapshotId) expect((await page.request.delete(`/api/report-snapshots/${snapshotId}`)).status()).toBe(204);
@@ -179,5 +232,6 @@ test("M-01 и M-02: отчёт от конструктора до витрины
       expect((await page.request.delete(`/api/reports/${reportId}?version=${version}`)).status()).toBe(204);
     }
     if (projectId) expect((await page.request.post(`/api/projects/${projectId}/archive`)).status()).toBe(200);
+    if (userProjectId) expect((await page.request.post(`/api/projects/${userProjectId}/archive`)).status()).toBe(200);
   }
 });

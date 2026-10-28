@@ -104,7 +104,53 @@ async function preparePrint(page: Page) {
   return page.locator("[data-dashboard-print]");
 }
 
-test("подписи виджета проектов обновляются из refs, а PDF сохраняет снимок без запросов при печати", async ({ page }, testInfo) => {
+test("истечение сессии закрывает подготовленный печатный дашборд", async ({ page }) => {
+  await openDashboard(page, { widgets: [widgets[0]] });
+  await preparePrint(page);
+  const ready = await page.evaluate(() => {
+    window.dispatchEvent(new Event("session-expired"));
+    return document.querySelector<HTMLElement>("[data-dashboard-print]")?.dataset.ready;
+  });
+  expect(ready).toBe("false");
+});
+
+test("отзыв доступа к дашборду после загрузки запрещает печать", async ({ page }) => {
+  await openDashboard(page, { widgets: [widgets[0]] });
+  await expect(page.getByRole("button", { name: "PDF / Печать", exact: true })).toBeEnabled();
+  await page.route("**/api/dashboards/41", (route) => route.fulfill({ status: 404, json: { detail: "Доступ отозван" } }));
+  await page.getByRole("button", { name: "PDF / Печать", exact: true }).click();
+  await expect(page.locator("#dashboard-print-hint")).toContainText("Печать недоступна");
+  expect(await page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(0);
+});
+
+for (const oldStatus of [200, 503]) test(`изменение редактора отменяет устаревшую печать, старый ответ ${oldStatus}`, async ({ page }) => {
+  await openDashboard(page, { widgets: [widgets[0]] });
+  let release = () => {}; let waiting = false; let finished = false; let checks = 0;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/dashboards/41", async (route) => {
+    if (++checks !== 1) return route.fallback();
+    waiting = true; await gate;
+    if (oldStatus === 200) await route.fallback();
+    else await route.fulfill({ status: oldStatus, json: { detail: "Ошибка старой попытки" } });
+    finished = true;
+  });
+  await expect(page.getByRole("button", { name: "PDF / Печать", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "PDF / Печать", exact: true }).click();
+  await expect.poll(() => waiting).toBe(true);
+  await page.getByLabel("Название дашборда").fill("Изменённый дашборд");
+  await expect(page.locator("#dashboard-print-hint")).toContainText("Печать отменена");
+  expect(await page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(0);
+  await expect(page.getByRole("button", { name: "PDF / Печать", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "PDF / Печать", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(1);
+  await expect(page.locator("[data-dashboard-print] h1")).toHaveText("Изменённый дашборд");
+  release();
+  await expect.poll(() => finished).toBe(true);
+  expect(await page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(1);
+  await expect(page.locator("[data-dashboard-print] h1")).toHaveText("Изменённый дашборд");
+});
+
+test("подписи виджета проектов обновляются из refs, а PDF сохраняет снимок после проверки доступа", async ({ page }, testInfo) => {
   let labels = { name: "Инициатива", client_id: "Заказчик", manager_id: "Куратор", amount: "Договор" };
   const requests = await openDashboard(page, { widgets: [widgets[4]], refs: () => ({ ...refs, project_field_labels: labels }) });
   const liveHeaders = page.locator(".widget .widget-table thead th");
@@ -117,7 +163,7 @@ test("подписи виджета проектов обновляются из
   const beforeFirstPrint = requests.length;
   const report = await preparePrint(page);
   await expect(report.locator('[data-widget-id="projects"] thead th')).toHaveText(firstHeaders);
-  expect(requests.length).toBe(beforeFirstPrint);
+  expect(requests.slice(beforeFirstPrint).map((request) => request.path)).toEqual(expect.arrayContaining(["/api/dashboards/41", "/api/auth/me"]));
 
   labels = { name: "Инициатива обновлена", client_id: "Контрагент", manager_id: "Ведущий проекта", amount: "Стоимость договора" };
   // Возврат соединения обновляет устаревшие refs через настоящий React Query.
@@ -149,7 +195,7 @@ test("подписи виджета проектов обновляются из
   await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(2);
   await expect(report.locator('[data-widget-id="projects"] thead th')).toHaveText(updatedHeaders);
   await expect(report.locator('[data-widget-id="projects"] tbody tr').first()).toContainText("ООО «Волгоградская промышленная компания»");
-  expect(requests.length).toBe(beforeSecondPrint);
+  expect(requests.slice(beforeSecondPrint).map((request) => request.path)).toEqual(expect.arrayContaining(["/api/dashboards/41", "/api/auth/me"]));
   expect(requests.every((request) => request.method === "GET")).toBeTruthy();
 });
 
@@ -232,7 +278,7 @@ test("неподготовленные шрифты запрещают непо�
   await preparePrint(page);
 });
 
-test("снимок содержит текущие несохранённые настройки, подписи фильтров и периоды без запросов и сохранения", async ({ page }) => {
+test("снимок содержит текущие несохранённые настройки, подписи фильтров и периоды без сохранения", async ({ page }) => {
   const requests = await openDashboard(page);
   await page.getByLabel("Название дашборда").fill("Несохранённый отчёт — Кириллица");
   await page.getByRole("button", { name: "Крупный бизнес ▾", exact: true }).click();
@@ -257,7 +303,7 @@ test("снимок содержит текущие несохранённые н
   await expect(report).toContainText("История: 12 нед. (29.08.2026 — 24.10.2026)");
   await expect(report).toContainText("Горизонт прогноза: 30 дн. (25.10.2026 — 14.11.2026)");
   await expect(report.locator(".print-widget")).toHaveCount(5);
-  expect(requests.length).toBe(before);
+  expect(requests.slice(before).map((request) => request.path)).toEqual(expect.arrayContaining(["/api/dashboards/41", "/api/auth/me"]));
   expect(requests.every((request) => request.method === "GET")).toBeTruthy();
   expect(requests.some((request) => request.path.includes("weeks=12&horizon=30"))).toBeTruthy();
   await page.getByLabel("Название дашборда").fill("Изменение после создания снимка");
@@ -323,7 +369,7 @@ test("просмотр общего дашборда пользователем 
   const report = await preparePrint(page);
   await expect(report).toContainText("Только мои проекты: Мария Продажина");
   await expect(report.locator("dl")).toContainText("Менеджеры:Мария Продажина");
-  expect(requests.length).toBe(before);
+  expect(requests.slice(before).map((request) => request.path)).toEqual(expect.arrayContaining(["/api/dashboards/41", "/api/auth/me"]));
   expect(requests.some((request) => request.path.includes("manager_id=7"))).toBeTruthy();
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toHaveCount(0);
 });
@@ -377,7 +423,7 @@ test("серверный scope_note для трёх аналитик и top-пр
   expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
   await testInfo.attach("Серверная область аналитики в PDF", { path: pdfPath, contentType: "application/pdf" });
   await page.emulateMedia({ media: "screen" });
-  expect(requests.length).toBe(beforePrint);
+  expect(requests.slice(beforePrint).map((request) => request.path)).toEqual(expect.arrayContaining(["/api/dashboards/41", "/api/auth/me"]));
   expect(requests.some((request) => request.path.startsWith("/api/projects?") && new URL(request.path, "http://localhost").searchParams.get("open_only") === "true")).toBe(true);
   scopeNote = original + " Сервер обновил пояснение.";
   await page.clock.fastForward(6 * 60_000);

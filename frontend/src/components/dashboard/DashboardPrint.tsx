@@ -5,15 +5,17 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { createPortal } from "react-dom";
 
 import { date } from "@/lib/format";
+import { SESSION_EXPIRED_EVENT, api } from "@/lib/api";
 import { useMe, useRefs } from "@/lib/hooks";
 import { resolveProjectFieldLabels } from "@/lib/project-field-labels";
 import { segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
-import type { BreakdownResponse, DashboardFilters, KpiResponse, ProjectPage, Refs, TrendResponse, User, Widget, WidgetType } from "@/lib/types";
+import type { BreakdownResponse, Dashboard, DashboardFilters, KpiResponse, ProjectPage, Refs, TrendResponse, User, Widget, WidgetType } from "@/lib/types";
 
 import { widgetQueryKey } from "./widget-data";
 import { BreakdownView, KpiView, ProjectsView, TrendView, type ProjectsViewLabels } from "./widgets";
 
 interface Props {
+  id: number;
   name: string;
   widgets: Widget[];
   filters: DashboardFilters;
@@ -49,17 +51,24 @@ function scopeLabel(me: User) {
   return me.role === "user" ? `Только мои проекты: ${me.full_name}` : "Проекты в пределах прав текущего пользователя";
 }
 
-/** Печатный снимок не делает запросов и не сохраняет состояние редактора. */
-export function DashboardPrint({ name, widgets, filters }: Props) {
+/** Снимок сохраняет состояние редактора после повторной проверки данных и доступа. */
+export function DashboardPrint({ id, name, widgets, filters }: Props) {
   const client = useQueryClient();
   const refs = useRefs();
   const me = useMe();
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [phase, setPhase] = useState<"idle" | "preparing" | "ready">("idle");
+  const [phase, setPhase] = useState<"idle" | "checking" | "preparing" | "ready">("idle");
   const [error, setError] = useState<string | null>(null);
   const surface = useRef<HTMLElement>(null);
   const running = useRef(false);
+  const attempt = useRef(0);
+  const revoked = useRef(false);
+  const inputKey = JSON.stringify([name, widgets, filters]);
+  const latestInput = useRef(inputKey);
+  const activeInput = useRef(inputKey);
+  const printStarted = useRef(false);
+  latestInput.current = inputKey;
 
   const subscribe = useCallback((notify: () => void) => client.getQueryCache().subscribe(notify), [client]);
   const revision = useCallback(() => widgets.map((widget) => {
@@ -68,7 +77,8 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
   }).join("|"), [client, filters, widgets]);
   useSyncExternalStore(subscribe, revision, () => "");
 
-  const unavailable = () => {
+  const unavailable = useCallback(() => {
+    if (revoked.current) return "Печать недоступна: сессия завершена.";
     if (refs.isError || me.isError) return "Печать недоступна: не удалось загрузить справочники или профиль.";
     if (!refs.data || !me.data || refs.isFetching || me.isFetching) return "Печать будет доступна после загрузки справочников и профиля.";
     for (const widget of widgets) {
@@ -82,20 +92,56 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
       }
     }
     return null;
-  };
+  }, [client, filters, me.data, me.isError, me.isFetching, refs.data, refs.isError, refs.isFetching, widgets]);
   const reason = unavailable();
+
+  useEffect(() => {
+    if (running.current && !printStarted.current && activeInput.current !== inputKey) {
+      attempt.current++;
+      running.current = false;
+      surface.current?.setAttribute("data-ready", "false");
+      setSnapshot(null);
+      setPhase("idle");
+      setError("Печать отменена: настройки дашборда изменились. Повторите попытку.");
+    }
+  }, [inputKey]);
+
+  useEffect(() => {
+    if (phase === "preparing" && reason) {
+      attempt.current++;
+      running.current = false;
+      surface.current?.setAttribute("data-ready", "false");
+      setSnapshot(null);
+      setPhase("idle");
+      setError(reason);
+    }
+  }, [phase, reason]);
 
   useEffect(() => {
     setTarget(document.body);
     const finish = () => {
+      attempt.current++;
       running.current = false;
+      printStarted.current = false;
       setPhase("idle");
       setSnapshot(null);
     };
+    const expire = () => {
+      revoked.current = true;
+      surface.current?.setAttribute("data-ready", "false");
+      finish();
+    };
+    const before = () => {
+      if (revoked.current || !running.current) surface.current?.setAttribute("data-ready", "false");
+    };
     window.addEventListener("afterprint", finish);
+    window.addEventListener("beforeprint", before);
+    window.addEventListener(SESSION_EXPIRED_EVENT, expire);
     return () => {
       running.current = false;
       window.removeEventListener("afterprint", finish);
+      window.removeEventListener("beforeprint", before);
+      window.removeEventListener(SESSION_EXPIRED_EVENT, expire);
     };
   }, []);
 
@@ -118,7 +164,7 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
         const svg = chart.querySelector("svg");
         return chart.dataset.printChart === "ready" && svg && svg.getBoundingClientRect().width > 0 && svg.getBoundingClientRect().height > 0;
       });
-      if (ready) {
+      if (ready && !revoked.current) {
         setPhase("ready");
       } else if (Date.now() >= deadline) {
         fail();
@@ -136,7 +182,16 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
     let second = 0;
     const first = requestAnimationFrame(() => {
       second = requestAnimationFrame(() => {
+        if (revoked.current || !running.current || activeInput.current !== latestInput.current || unavailable()) {
+          surface.current?.setAttribute("data-ready", "false");
+          running.current = false;
+          setSnapshot(null);
+          setPhase("idle");
+          setError("Печать отменена: данные или доступ изменились. Обновите страницу и повторите попытку.");
+          return;
+        }
         try {
+          printStarted.current = true;
           window.print();
         } catch {
           running.current = false;
@@ -147,27 +202,60 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
       });
     });
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
-  }, [phase, snapshot]);
+  }, [phase, snapshot, unavailable]);
 
-  const print = () => {
+  const print = async () => {
     if (running.current) return;
     const blocked = unavailable();
     if (blocked || !refs.data || !me.data) { setError(blocked); return; }
     running.current = true;
+    const request = ++attempt.current;
+    printStarted.current = false;
+    activeInput.current = inputKey;
     setError(null);
-    setPhase("preparing");
+    setPhase("checking");
     const labels = resolveProjectFieldLabels(refs.data.project_field_labels);
+    let currentUser: User;
+    try {
+      const keys = new Map(widgets.map((widget) => {
+        const key = widgetQueryKey(widget, filters);
+        return [JSON.stringify(key), key] as const;
+      }));
+      const results = await Promise.all([
+        api<Dashboard>(`/dashboards/${id}`, { cache: "no-store" }),
+        api<User>("/auth/me", { cache: "no-store" }),
+        ...Array.from(keys.values(), (key) => client.refetchQueries({ queryKey: key, exact: true }, { throwOnError: true })),
+      ]);
+      currentUser = results[1] as User;
+      if (currentUser.id !== me.data.id || currentUser.role !== me.data.role) throw new Error("Доступ изменился");
+      if (request !== attempt.current || !running.current || revoked.current) return;
+      if (activeInput.current !== latestInput.current) {
+        running.current = false;
+        setPhase("idle");
+        setError("Печать отменена: настройки дашборда изменились. Повторите попытку.");
+        return;
+      }
+      const blockedAfterRefresh = unavailable();
+      if (blockedAfterRefresh) throw new Error(blockedAfterRefresh);
+    } catch {
+      if (request !== attempt.current) return;
+      running.current = false;
+      setPhase("idle");
+      setError("Печать недоступна: не удалось проверить доступ или обновить данные. Обновите страницу и повторите попытку.");
+      return;
+    }
     setSnapshot({
       name,
       generatedAt: timestamp(Date.now()),
       filters: filterLabels(filters, refs.data),
-      scope: scopeLabel(me.data),
+      scope: scopeLabel(currentUser),
       projectLabels: { name: labels.name, client_id: labels.client_id, manager_id: labels.manager_id, amount: labels.amount },
       widgets: [...widgets].sort((a, b) => a.y - b.y || a.x - b.x).map((widget) => {
         const state = client.getQueryState<Responses[WidgetType]>(widgetQueryKey(widget, filters))!;
         return { type: widget.type, widget: structuredClone(widget), data: structuredClone(state.data!), loadedAt: timestamp(state.dataUpdatedAt) } as WidgetSnapshot;
       }),
     });
+    setPhase("preparing");
   };
 
   return (
@@ -177,7 +265,7 @@ export function DashboardPrint({ name, widgets, filters }: Props) {
           PDF / Печать
         </button>
         <span id="dashboard-print-hint" className="muted" role="status">
-          {error ?? (phase === "preparing" ? "Готовим печатный снимок…" : phase === "ready" ? "Закройте диалог печати, чтобы продолжить." : reason ?? "В диалоге печати выберите «Сохранить как PDF», формат A4.")}
+          {error ?? (phase === "checking" || phase === "preparing" ? "Готовим печатный снимок…" : phase === "ready" ? "Закройте диалог печати, чтобы продолжить." : reason ?? "В диалоге печати выберите «Сохранить как PDF», формат A4.")}
         </span>
       </div>
       {target && createPortal(
@@ -218,7 +306,7 @@ function PrintableWidget({ item, projectLabels }: { item: WidgetSnapshot; projec
           Горизонт прогноза: {widget.config.horizon ?? 14} дн. ({range(item.data.forecast)}).
         </p>}
         {item.type === "kpi" && <p>На дату: {date(item.data.as_of)}. Сравнение: {date(item.data.previous_as_of)}.</p>}
-        {item.type === "projects" && <p>Открытые проекты по убыванию суммы. Показано: {item.data.items.length}, лимит: {widget.config.limit ?? 8}.</p>}
+        {item.type === "projects" && <p>Открытые проекты по убыванию суммы. Показано: {item.data.items.length}, всего: {item.data.total}, лимит: {widget.config.limit ?? 8}.</p>}
         {item.type === "breakdown" && <p>Срез по текущим фильтрам из загруженных данных.</p>}
       </div>
       {item.type === "kpi" && <KpiView widget={widget} data={item.data} />}

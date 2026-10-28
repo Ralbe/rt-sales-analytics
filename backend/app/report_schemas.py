@@ -1,5 +1,6 @@
 import unicodedata
-from typing import Annotated, Literal
+from datetime import datetime
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -60,3 +61,32 @@ class PublishInput(StrictModel):
 
 class RunInput(StrictModel):
     version: int = Field(ge=1)
+
+
+class SnapshotFilter(BaseModel):
+    field: str
+    label: str
+    operator: str
+    value: bool | int | str
+    value_label: bool | int | str
+
+
+class SnapshotMetadata(BaseModel):
+    filters: list[SnapshotFilter]
+    scope: Literal["own", "all_available"]
+    grain: Literal["project", "financial_entry"]
+    max_rows: int
+    max_bytes: int
+
+
+class SnapshotPage(BaseModel):
+    snapshot_id: str
+    title: str
+    columns: list[dict[str, str]]
+    rows: list[dict[str, Any]]
+    total: int
+    offset: int
+    limit: int
+    expires_at: datetime
+    report_version: int | None
+    metadata: SnapshotMetadata | None

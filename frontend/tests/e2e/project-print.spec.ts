@@ -103,6 +103,35 @@ async function reconnect(page: Page) {
   await page.evaluate(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
 }
 
+test("отзыв доступа к проекту после загрузки запрещает печать", async ({ page }) => {
+  const state = await openProject(page);
+  await expect(button(page)).toBeEnabled();
+  state.errors.project = 404;
+  await button(page).click();
+  await expect(page.locator("#project-print-hint")).toContainText("Печать недоступна");
+  expect(await page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(0);
+});
+
+test("ошибка справочников во время проверки освобождает подготовку печати", async ({ page }) => {
+  const state = await openProject(page);
+  await expect(button(page)).toBeEnabled();
+  let release = () => {}; let waiting = false;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/projects/41", async (route) => { waiting = true; await gate; return route.fallback(); });
+  await button(page).click();
+  await expect.poll(() => waiting).toBe(true);
+  state.errors.refs = 503;
+  await reconnect(page);
+  await expect(page.locator("#project-print-hint")).toContainText("Печать недоступна");
+  release();
+  await expect(page.locator("#project-print-hint")).toContainText("данные или доступ изменились");
+  await expect(report(page)).toBeEmpty();
+  state.errors.refs = 0;
+  await reconnect(page);
+  await expect(button(page)).toBeEnabled();
+  await preparePrint(page);
+});
+
 for (const source of ["project", "refs", "me"] as const) {
   test(`печать ждёт загрузки ${source} и не выводит форму через меню браузера`, async ({ page }) => {
     let release!: () => void;
@@ -139,7 +168,7 @@ for (const source of ["project", "refs", "me"] as const) {
   });
 }
 
-test("AT-103: снимок содержит сохранённые поля, точные Decimal, даты и отдельные финансы без сети", async ({ page }) => {
+test("AT-103: снимок содержит сохранённые поля, точные Decimal, даты и отдельные финансы", async ({ page }) => {
   const state = await openProject(page);
   await expect(page.getByLabel(/Название проекта/)).toHaveValue(PROJECT.name);
   await page.getByLabel("Суть проекта").fill("НЕСОХРАНЁННАЯ СУТЬ");
@@ -148,7 +177,7 @@ test("AT-103: снимок содержит сохранённые поля, т�
   await page.getByLabel("Сумма, тыс. ₽").first().fill("2.222");
   await expect(page.locator("#project-print-hint")).toContainText("Печатаются только сохранённые данные");
   await expect.poll(() => state.requests.includes("GET /projects/check-name")).toBe(true);
-  // Любая сеть после подготовки страницы делает проверку печати красной, включая внешние сервисы.
+  // Печать повторно проверяет доступ только через локальный API.
   const network: string[] = [];
   page.on("request", (request) => network.push(`${request.method()} ${request.url()}`));
   const printed = await preparePrint(page);
@@ -184,7 +213,7 @@ test("AT-103: снимок содержит сохранённые поля, т�
   await expect(costs).toContainText("12.2027");
   await expect(printed).not.toContainText("НЕСОХРАНЁНН");
   await expect(printed.locator("input, textarea, select, button, [contenteditable]")).toHaveCount(0);
-  expect(network).toEqual([]);
+  expect(network.map((entry) => new URL(entry.split(" ")[1]).pathname).sort()).toEqual(["/api/auth/me", "/api/projects/41"]);
   expect(state.unexpected).toEqual([]);
   await closePrint(page);
   await expect(page.getByLabel("Суть проекта")).toHaveValue("НЕСОХРАНЁННАЯ СУТЬ");
@@ -311,7 +340,7 @@ test("401 защищённого ресурса удаляет подготов�
   await page.emulateMedia({ media: "print" });
   await expect(page.locator("body")).not.toContainText(PROJECT.name);
   await expect(page.locator("body")).not.toContainText(PROJECT.financial_entries[0].amount);
-  expect(state.requests.filter((request) => request === "GET /auth/me")).toHaveLength(1);
+  expect(state.requests.filter((request) => request === "GET /auth/me")).toHaveLength(2);
 });
 
 test("ошибка window.print освобождает снимок и оставляет повтор доступным", async ({ page }) => {

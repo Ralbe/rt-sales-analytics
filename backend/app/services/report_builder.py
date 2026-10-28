@@ -380,7 +380,20 @@ def make_snapshot(
     lock_projects(db, user, sorted(project_ids))
     lookup = {item["id"]: item for item in registry(db)}
     columns = [{k: lookup[key][k] for k in ("id", "label", "type")} for key in definition.columns]
-    size += len(json.dumps(columns, ensure_ascii=True).encode("utf-8")) + len(json.dumps(sorted(project_ids))) + 100
+    filters = []
+    for item in definition.filters:
+        choices = CHOICES.get(item.field, {})
+        value_label = choices.get(item.value, item.value) if item.operator != "is_null" else item.value
+        filters.append({
+            "field": item.field, "label": lookup[item.field]["label"], "operator": item.operator,
+            "value": item.value, "value_label": value_label,
+        })
+    metadata = {
+        "filters": filters, "scope": "own" if user.role == Role.user else "all_available",
+        "grain": definition.grain, "max_rows": MAX_ROWS, "max_bytes": MAX_BYTES,
+    }
+    size += len(json.dumps([columns, metadata], ensure_ascii=True).encode("utf-8"))
+    size += len(json.dumps(sorted(project_ids))) + 100
     if size > MAX_BYTES:
         invalid("Размер снимка превышает 10 МБ; сузьте фильтры")
     snapshot = ReportSnapshot(
@@ -394,6 +407,7 @@ def make_snapshot(
         columns=columns,
         rows=rows,
         project_ids=sorted(project_ids),
+        print_metadata=metadata,
     )
     db.add(snapshot)
     db.commit()
