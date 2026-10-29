@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
 
 import { SESSION_EXPIRED_EVENT, api } from "@/lib/api";
 import { useMe, useRefs } from "@/lib/hooks";
+import { managerName } from "@/lib/reference-options";
 import { useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import type { FinancialEntry, Project, RefItem, Refs, User } from "@/lib/types";
 
@@ -108,7 +110,7 @@ function makeSnapshot(project: Project, refs: Refs, labels: Labels): Snapshot {
       { title: "Данные проекта", rows: [
         ...rows(["id", "name"]), row("client", project.client.name), row("client_inn", text(project.client_inn)),
         row("segment", project.segment.name),
-        row("manager", project.manager.full_name), row("service", project.service.name), row("service_group", text(project.service.group_name)),
+        row("manager", managerName(project.manager, refs)), row("service", project.service.name), row("service_group", text(project.service.group_name)),
         row("payment_type", text(project.payment_type?.name)), row("description", text(project.description)),
       ] },
       { title: "Этапы и признаки", rows: [
@@ -138,6 +140,7 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
   labels?: Partial<Labels>;
 }) {
   const refs = useRefs();
+  const queryClient = useQueryClient();
   const configuredLabels = useProjectFieldLabels();
   const me = useMe();
   const [target, setTarget] = useState<HTMLElement | null>(null);
@@ -185,6 +188,13 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
   }, [invalid]);
 
   useEffect(() => {
+    if (phase === "preparing" && blocked && running.current) {
+      finish();
+      setError("Печать недоступна: данные или доступ изменились. Повторите попытку после загрузки.");
+    }
+  }, [phase, blocked]);
+
+  useEffect(() => {
     if (!snapshot || phase !== "preparing" || invalid) return;
     let cancelled = false;
     const timer = setTimeout(() => {
@@ -218,6 +228,7 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
     const request = ++attempt.current;
     setError(null);
     setPhase("preparing");
+    const refsRevision = queryClient.getQueryState<Refs>(["refs"])?.dataUpdateCount;
     const labels: Labels = { ...PROJECT_PRINT_LABELS };
     for (const [printKey, fieldKey] of Object.entries(LABEL_KEYS) as [keyof Labels, ProjectFieldKey][]) {
       labels[printKey] = ["created_at", "updated_at"].includes(fieldKey)
@@ -230,7 +241,8 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
       ]);
       if (currentUser.id !== me.data?.id || currentUser.role !== me.data.role) throw new Error("Доступ изменился");
       if (request !== attempt.current || !running.current || revoked.current) return;
-      if (!allowed.current) {
+      const refsState = queryClient.getQueryState<Refs>(["refs"]);
+      if (!allowed.current || refsState?.fetchStatus !== "idle" || refsState?.status !== "success" || refsState.dataUpdateCount !== refsRevision) {
         finish();
         setError("Печать недоступна: данные или доступ изменились. Обновите страницу и повторите попытку.");
         return;

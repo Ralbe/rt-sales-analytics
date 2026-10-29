@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core import cache
 from app.core.security import hash_password
 from app.db import get_db
 from app.deps import require_roles
@@ -153,4 +154,6 @@ def update_user(
     except IntegrityError:
         db.rollback()
         raise _duplicate_email() from None
+    if before["full_name"] != user.full_name:
+        cache.bump("analytics")
     return user

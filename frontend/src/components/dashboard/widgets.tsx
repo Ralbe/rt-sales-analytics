@@ -8,6 +8,8 @@ import type { ReactNode } from "react";
 import { Chart, PALETTE } from "@/components/Chart";
 import { api } from "@/lib/api";
 import { count, date, money, pct } from "@/lib/format";
+import { managerName } from "@/lib/reference-options";
+import { useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldLabels } from "@/lib/project-field-labels";
 import type {
   BreakdownResponse,
@@ -15,6 +17,7 @@ import type {
   DashboardFilters,
   KpiResponse,
   ProjectPage,
+  Refs,
   TrendResponse,
   Widget,
 } from "@/lib/types";
@@ -142,6 +145,7 @@ export function TrendView({ widget, data, printable = false }: { widget: Widget;
 }
 
 export function BreakdownWidget({ widget, filters }: Props) {
+  const { data: refs } = useRefs();
   const { metric = "funnel", group_by = "segment" } = widget.config;
   const q = useQuery({
     queryKey: widgetQueryKey(widget, filters),
@@ -149,12 +153,14 @@ export function BreakdownWidget({ widget, filters }: Props) {
       api<BreakdownResponse>("/analytics/breakdown", { query: { ...filterQuery(filters), group_by, metric } }),
   });
   if (!q.data) return <State loading={q.isLoading} error={q.error} />;
-  return <BreakdownView widget={widget} data={q.data} />;
+  return <BreakdownView widget={widget} data={q.data} refs={refs} />;
 }
 
-export function BreakdownView({ widget, data, printable = false }: { widget: Widget; data: BreakdownResponse; printable?: boolean }) {
+export function BreakdownView({ widget, data, printable = false, refs }: { widget: Widget; data: BreakdownResponse; printable?: boolean; refs?: Refs }) {
   const { metric = "funnel", chart = "bar" } = widget.config;
-  const items = data.items;
+  const items = data.group_by === "manager" ? data.items.map((item) => ({
+    ...item, label: managerName({ id: Number(item.key), full_name: item.label }, refs),
+  })) : data.items;
   const f = fmt(metric);
   if (!items.length) return <AnalyticsFrame data={data} printable={printable}><div className="muted">Нет данных для выбранных фильтров</div></AnalyticsFrame>;
 
@@ -227,6 +233,7 @@ export function BreakdownView({ widget, data, printable = false }: { widget: Wid
 }
 
 export function ProjectsWidget({ widget, filters }: Props) {
+  const { data: refs } = useRefs();
   const { labels } = useProjectFieldLabels();
   const limit = widget.config.limit ?? 8;
   const q = useQuery({
@@ -237,13 +244,13 @@ export function ProjectsWidget({ widget, filters }: Props) {
       }),
   });
   if (!q.data) return <State loading={q.isLoading} error={q.error} />;
-  return <ProjectsView data={q.data} labels={labels} />;
+  return <ProjectsView data={q.data} labels={labels} refs={refs} />;
 }
 
 export type ProjectsViewLabels = Pick<ProjectFieldLabels, "name" | "client_id" | "manager_id" | "amount">;
 
-export function ProjectsView({ data, labels, printable = false }: {
-  data: ProjectPage; labels: ProjectsViewLabels; printable?: boolean;
+export function ProjectsView({ data, labels, printable = false, refs }: {
+  data: ProjectPage; labels: ProjectsViewLabels; printable?: boolean; refs?: Refs;
 }) {
   const router = useRouter();
   return (
@@ -263,7 +270,7 @@ export function ProjectsView({ data, labels, printable = false }: {
             <tr key={p.id} className={printable ? undefined : "clickable"} onClick={printable ? undefined : () => router.push(`/projects/${p.id}`)}>
               <td>{p.name}</td>
               <td>{p.client.name}</td>
-              <td>{p.manager.full_name}</td>
+              <td>{managerName(p.manager, refs)}</td>
               <td className="num">{money(p.amount)}</td>
             </tr>
           ))}

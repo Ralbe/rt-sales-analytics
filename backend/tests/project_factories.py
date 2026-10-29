@@ -35,6 +35,8 @@ def create_legacy_project(db, **overrides):
     user = db.scalar(select(User).where(User.email == "manager1@example.com"))
     values = ProjectIn.model_validate(legacy_payload(db, **overrides)).model_dump()
     values["manager_id"] = values["manager_id"] or user.id
+    if "segment_id" not in overrides and values.get("segment_id") is None:
+        values["segment_id"] = db.get(Client, values["client_id"]).segment_id
     project = Project(stage_scheme="legacy", **values)
     db.add(project)
     db.flush()

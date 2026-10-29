@@ -8,7 +8,7 @@ import { date } from "@/lib/format";
 import { SESSION_EXPIRED_EVENT, api } from "@/lib/api";
 import { useMe, useRefs } from "@/lib/hooks";
 import { resolveProjectFieldLabels } from "@/lib/project-field-labels";
-import { segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
+import { managerFilterOptions, segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
 import type { BreakdownResponse, Dashboard, DashboardFilters, KpiResponse, ProjectPage, Refs, TrendResponse, User, Widget, WidgetType } from "@/lib/types";
 
 import { widgetQueryKey } from "./widget-data";
@@ -30,6 +30,7 @@ interface Snapshot {
   scope: string;
   widgets: WidgetSnapshot[];
   projectLabels: ProjectsViewLabels;
+  refs: Refs;
 }
 
 const timestamp = (value: number) => new Intl.DateTimeFormat("ru-RU", {
@@ -43,7 +44,7 @@ function filterLabels(filters: DashboardFilters, refs: Refs) {
   return [
     { label: "Сегменты", value: names(filters.segment_ids, segmentFilterOptions(refs)) },
     { label: "Услуги", value: names(filters.service_ids, serviceFilterOptions(refs)) },
-    { label: "Менеджеры", value: names(filters.manager_ids, refs.managers.map((item) => ({ id: item.id, name: item.full_name }))) },
+    { label: "Менеджеры", value: names(filters.manager_ids, managerFilterOptions(refs)) },
   ];
 }
 
@@ -105,6 +106,16 @@ export function DashboardPrint({ id, name, widgets, filters }: Props) {
       setError("Печать отменена: настройки дашборда изменились. Повторите попытку.");
     }
   }, [inputKey]);
+
+  useEffect(() => {
+    if (phase === "checking" && (refs.isFetching || refs.isError || me.isFetching || me.isError)) {
+      attempt.current++;
+      running.current = false;
+      setSnapshot(null);
+      setPhase("idle");
+      setError("Печать отменена: данные обновляются. Повторите попытку после загрузки.");
+    }
+  }, [phase, refs.isFetching, refs.isError, me.isFetching, me.isError]);
 
   useEffect(() => {
     if (phase === "preparing" && reason) {
@@ -214,6 +225,7 @@ export function DashboardPrint({ id, name, widgets, filters }: Props) {
     activeInput.current = inputKey;
     setError(null);
     setPhase("checking");
+    const refsRevision = client.getQueryState<Refs>(["refs"])?.dataUpdateCount;
     const labels = resolveProjectFieldLabels(refs.data.project_field_labels);
     let currentUser: User;
     try {
@@ -235,8 +247,9 @@ export function DashboardPrint({ id, name, widgets, filters }: Props) {
         setError("Печать отменена: настройки дашборда изменились. Повторите попытку.");
         return;
       }
+      const currentRefs = client.getQueryState<Refs>(["refs"]);
       const blockedAfterRefresh = unavailable();
-      if (blockedAfterRefresh) throw new Error(blockedAfterRefresh);
+      if (blockedAfterRefresh || currentRefs?.fetchStatus !== "idle" || currentRefs?.status !== "success" || currentRefs.dataUpdateCount !== refsRevision) throw new Error(blockedAfterRefresh ?? "Справочники изменились");
     } catch {
       if (request !== attempt.current) return;
       running.current = false;
@@ -249,6 +262,7 @@ export function DashboardPrint({ id, name, widgets, filters }: Props) {
       generatedAt: timestamp(Date.now()),
       filters: filterLabels(filters, refs.data),
       scope: scopeLabel(currentUser),
+      refs: structuredClone(refs.data),
       projectLabels: { name: labels.name, client_id: labels.client_id, manager_id: labels.manager_id, amount: labels.amount },
       widgets: [...widgets].sort((a, b) => a.y - b.y || a.x - b.x).map((widget) => {
         const state = client.getQueryState<Responses[WidgetType]>(widgetQueryKey(widget, filters))!;
@@ -281,7 +295,7 @@ export function DashboardPrint({ id, name, widgets, filters }: Props) {
                 <p>Область доступа: {snapshot.scope}</p>
               </header>
               {snapshot.widgets.length === 0 && <p>На текущем дашборде нет виджетов.</p>}
-              {snapshot.widgets.map((item) => <PrintableWidget key={item.widget.id} item={item} projectLabels={snapshot.projectLabels} />)}
+              {snapshot.widgets.map((item) => <PrintableWidget key={item.widget.id} item={item} projectLabels={snapshot.projectLabels} refs={snapshot.refs} />)}
             </>
           ) : <p>Печатная версия не подготовлена. Вернитесь на дашборд и нажмите «PDF / Печать» после загрузки всех виджетов.</p>}
         </section>, target,
@@ -294,7 +308,7 @@ function range(points: { date: string }[]) {
   return points.length ? `${date(points[0].date)} — ${date(points[points.length - 1].date)}` : "Нет данных";
 }
 
-function PrintableWidget({ item, projectLabels }: { item: WidgetSnapshot; projectLabels: ProjectsViewLabels }) {
+function PrintableWidget({ item, projectLabels, refs }: { item: WidgetSnapshot; projectLabels: ProjectsViewLabels; refs: Refs }) {
   const { widget } = item;
   return (
     <article className="print-widget" data-widget-id={widget.id}>
@@ -311,8 +325,8 @@ function PrintableWidget({ item, projectLabels }: { item: WidgetSnapshot; projec
       </div>
       {item.type === "kpi" && <KpiView widget={widget} data={item.data} />}
       {item.type === "trend" && <TrendView widget={widget} data={item.data} printable />}
-      {item.type === "breakdown" && <BreakdownView widget={widget} data={item.data} printable />}
-      {item.type === "projects" && <ProjectsView data={item.data} labels={projectLabels} printable />}
+      {item.type === "breakdown" && <BreakdownView widget={widget} data={item.data} printable refs={refs} />}
+      {item.type === "projects" && <ProjectsView data={item.data} labels={projectLabels} printable refs={refs} />}
     </article>
   );
 }

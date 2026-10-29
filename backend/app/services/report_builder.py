@@ -240,7 +240,8 @@ def validate(definition: Definition):
 def query(definition, user):
     expressions = [FIELDS[key].expression for key in definition.columns]
     stmt = select(Project.id, *expressions).select_from(Project).join(Client, Project.client_id == Client.id)
-    stmt = stmt.join(Segment, Client.segment_id == Segment.id).join(Service, Project.service_id == Service.id)
+    stmt = stmt.join(Segment, func.coalesce(Project.segment_id, Client.segment_id) == Segment.id)
+    stmt = stmt.join(Service, Project.service_id == Service.id)
     stmt = stmt.join(manager, Project.manager_id == manager.id)
     for alias, key in [
         (stage_ref, Project.customer_stage_id),

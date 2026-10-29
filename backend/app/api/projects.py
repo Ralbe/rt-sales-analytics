@@ -25,6 +25,7 @@ from app.models import (
     ProjectFinancialEntry,
     ReferenceValue,
     Role,
+    Segment,
     Service,
     Stage,
     User,
@@ -82,7 +83,7 @@ def to_out(p: Project) -> dict:
         "description": p.description,
         "client": p.client,
         "client_inn": p.client.inn,
-        "segment": p.client.segment,
+        "segment": p.segment or p.client.segment,
         "manager": p.manager,
         "service": p.service,
         "stage": p.stage,
@@ -139,7 +140,7 @@ def _filtered_query(
     if q:
         stmt = stmt.where(or_(Project.name.ilike(f"%{q}%"), Client.name.ilike(f"%{q}%"), Client.inn.startswith(q)))
     if segment_id:
-        stmt = stmt.where(Client.segment_id.in_(segment_id))
+        stmt = stmt.where(func.coalesce(Project.segment_id, Client.segment_id).in_(segment_id))
     if service_id:
         stmt = stmt.where(Project.service_id.in_(service_id))
     if manager_id:
@@ -251,7 +252,7 @@ def export_projects(
                 p.name,
                 p.client.name,
                 p.client.inn,
-                p.client.segment.name,
+                (p.segment or p.client.segment).name,
                 p.service.name,
                 p.manager.full_name,
                 STAGE_LABELS[p.stage] if p.stage is not None else "Не применяется",
@@ -421,7 +422,8 @@ def _apply(
             raise HTTPException(422, {"field": "stage", "message": "Укажите прежнюю стадию проекта"})
         if "probability" in data.model_fields_set and data.probability is None:
             raise HTTPException(422, {"field": "probability", "message": "Укажите вероятность проекта"})
-    if db.get(Client, data.client_id) is None:
+    client = db.get(Client, data.client_id)
+    if client is None:
         raise HTTPException(422, {"field": "client_id", "message": "Клиент не найден"})
     service = db.scalar(
         select(Service).where(Service.id == data.service_id).with_for_update(read=True)
@@ -430,6 +432,23 @@ def _apply(
     retained_service = project.id is not None and data.service_id == project.service_id
     if service is None or (not service.is_active and not retained_service):
         raise HTTPException(422, {"field": "service_id", "message": "Услуга не найдена"})
+
+    # Старый POST наследует сегмент клиента; старый PUT сохраняет сегмент проекта.
+    # Явное null не означает наследование: оно не задаёт допустимый сегмент.
+    segment_supplied = "segment_id" in data.model_fields_set
+    if segment_supplied and data.segment_id is None:
+        raise HTTPException(422, {"field": "segment_id", "message": "Выберите сегмент проекта"})
+    previous_segment_id = (project.segment_id or project.client.segment_id) if project.id is not None else None
+    selected_segment_id = (data.segment_id if segment_supplied else
+                           previous_segment_id if project.id is not None else client.segment_id)
+    segment = db.scalar(
+        select(Segment).where(Segment.id == selected_segment_id).with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    retained_segment = project.id is not None and selected_segment_id == previous_segment_id
+    inherited_client_segment = project.id is None and not segment_supplied
+    if segment is None or (not segment.is_active and not retained_segment and not inherited_client_segment):
+        raise HTTPException(422, {"field": "segment_id", "message": "Сегмент не найден или отключён"})
 
     expected_categories = {
         "payment_type_id": "payment_type",
@@ -453,9 +472,15 @@ def _apply(
     if user.role == Role.user:
         manager_id = user.id
     else:
-        manager_id = data.manager_id or user.id
-        manager = db.get(User, manager_id)
-        if manager is None or not manager.is_active:
+        manager_id = data.manager_id if data.manager_id is not None else (
+            project.manager_id if project.id is not None else user.id
+        )
+        manager = db.scalar(
+            select(User).where(User.id == manager_id).with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+        retained_manager = project.id is not None and manager_id == project.manager_id
+        if manager is None or (not manager.is_active and not retained_manager):
             raise HTTPException(422, {"field": "manager_id", "message": "Ответственный не найден"})
 
     if _find_duplicate(db, data.name, data.client_id, project.id):
@@ -468,11 +493,13 @@ def _apply(
         raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
 
     was_closed = project.stage in CLOSED_STAGES if project.stage else False
-    for field, value in data.model_dump(
-        exclude={"manager_id", "financial_entries", "stage", "customer_stage_id", "probability"},
-    ).items():
+    excluded = {"manager_id", "segment_id", "financial_entries", "stage", "customer_stage_id", "probability"}
+    if project.id is not None and "implementation_year" not in data.model_fields_set:
+        excluded.add("implementation_year")
+    for field, value in data.model_dump(exclude=excluded).items():
         setattr(project, field, value)
     project.manager_id = manager_id
+    project.segment_id = selected_segment_id
     if customer:
         project.stage = None
         project.customer_stage_id = data.customer_stage_id

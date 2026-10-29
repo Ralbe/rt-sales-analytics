@@ -14,6 +14,7 @@ export interface ClientValue {
   id: number;
   name: string;
   segment?: string;
+  segment_id?: number;
 }
 
 interface Props {
@@ -57,7 +58,7 @@ export function ClientCombobox({ id, value, onChange, onBlur, disabled, allowCre
   }, [open, value, onBlur]);
 
   const select = (c: ClientItem) => {
-    onChange({ id: c.id, name: c.name, segment: c.segment.name });
+    onChange({ id: c.id, name: c.name, segment: c.segment.name, segment_id: c.segment.id });
     setText(c.name);
     setOpen(false);
     onBlur();

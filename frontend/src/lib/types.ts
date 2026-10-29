@@ -28,6 +28,7 @@ export interface Refs {
   filter_segments?: (RefItem & { is_active: boolean })[];
   filter_services?: (ServiceItem & { is_active: boolean })[];
   managers: ManagerItem[];
+  filter_managers?: (ManagerItem & { is_active: boolean })[];
   stages: { id: Stage; name: string; probability: number }[];
   payment_types: RefItem[];
   assessment_statuses: RefItem[];

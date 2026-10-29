@@ -12,7 +12,7 @@ import { date } from "@/lib/format";
 import { calendarPeriod, isPeriodDate, periodError, type PeriodPreset } from "@/lib/event-period";
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
-import { segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
+import { managerName, managerFilterOptions, segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
 import type { ProjectPage, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 20;
@@ -185,7 +185,7 @@ export default function ProjectsPage() {
             {seesAllProjects(me?.role) && (
               <MultiSelect
                 label={filterLabel("manager_id", "Менеджеры")}
-                options={refs.managers.map((m) => ({ id: m.id, name: m.full_name }))}
+                options={managerFilterOptions(refs, managers)}
                 value={managers}
                 onChange={withReset(setManagers)}
               />
@@ -276,7 +276,7 @@ export default function ProjectsPage() {
                   <td>{p.client_inn || "—"}</td>
                   <td>{p.segment.name}</td>
                   <td>{p.service.name}</td>
-                  <td>{p.manager.full_name}</td>
+                  <td>{managerName(p.manager, refs)}</td>
                   <td>
                     <span
                       className={`badge ${p.stage === "won" ? "won" : p.stage === "lost" ? "lost" : ""}`}

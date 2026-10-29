@@ -199,6 +199,7 @@ def seed(db: Session, today: date | None = None, projects_count: int = 1400) -> 
                 name=name,
                 description=f"{base} для клиента {client.name}.",
                 client_id=client.id,
+                segment_id=client.segment_id,
                 manager_id=rng.choice(managers).id,
                 service_id=all_services[service_name].id,
                 stage_scheme="legacy",
