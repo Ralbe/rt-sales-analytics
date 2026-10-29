@@ -109,10 +109,11 @@ test("неактивные значения остаются в сохранён
   await expect(status).toHaveValue("90");
   await expect(status.locator("option[value='90']")).toHaveText("Прежний статус (неактивно)");
   await page.getByLabel("Суть проекта").fill("Новое описание");
+  await page.getByLabel("Сумма, тыс. ₽").fill("16");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
   await expect.poll(() => state.writes.length).toBe(1);
   expect(state.writes[0]).toMatchObject({ payment_type_id: 77, financial_entries: [
-    { id: 88, status_id: 90, article_id: 91, cost_type_id: 92 },
+    { id: 88, amount: "16", status_id: 90, article_id: 91, cost_type_id: 92 },
   ] });
 });
 
