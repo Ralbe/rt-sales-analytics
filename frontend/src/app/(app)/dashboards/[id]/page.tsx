@@ -13,7 +13,7 @@ import { MultiSelect } from "@/components/MultiSelect";
 import { QueryState } from "@/components/QueryState";
 import { ApiError, api, del, post, put } from "@/lib/api";
 import { canConfigureDashboards, canPublishDashboards, seesAllProjects, useMe, useRefs } from "@/lib/hooks";
-import { segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
+import { managerFilterOptions, segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
 import type { Dashboard, DashboardFilters, Widget } from "@/lib/types";
 
 // Сетка рассчитана так, чтобы 12 строк занимали ровно видимую высоту экрана
@@ -183,7 +183,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
               {seesAllProjects(me?.role) && (
                 <MultiSelect
                   label="Менеджеры"
-                  options={refs.managers.map((m) => ({ id: m.id, name: m.full_name }))}
+                  options={managerFilterOptions(refs, filters.manager_ids)}
                   value={filters.manager_ids}
                   onChange={setFilter("manager_ids")}
                 />

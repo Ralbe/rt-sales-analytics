@@ -205,8 +205,9 @@ test("год остаётся одним целым годом, зависимы
   await expect(page.getByLabel("Номер отраслевого проекта", { exact: true })).toHaveCount(0);
   await saveButton(page, true).click();
   await expect.poll(() => state.writes.length).toBe(2);
+  expect(state.writes[1]).not.toHaveProperty("implementation_year");
   expect(state.writes[1]).toMatchObject({
-    implementation_year: 2027, accepted_for_forecast: false, assessment_status_id: null,
+    accepted_for_forecast: false, assessment_status_id: null,
     is_industry_solution: false, industry_manager: null, industry_project_number: null,
   });
 });

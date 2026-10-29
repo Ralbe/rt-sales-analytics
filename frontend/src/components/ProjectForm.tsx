@@ -13,6 +13,7 @@ import { ApiError, api, post, put } from "@/lib/api";
 import { date, moneyFull, today } from "@/lib/format";
 import { canEditProjects, useMe, useRefs } from "@/lib/hooks";
 import { useProjectFieldLabels } from "@/lib/project-field-labels";
+import { managerName } from "@/lib/reference-options";
 import { projectHistoryKey } from "@/lib/history-types";
 import type { FinancialEntry, Project } from "@/lib/types";
 
@@ -36,9 +37,10 @@ const schema = z
   .object({
     name: z.string().trim().min(3, "Минимум 3 символа").max(300, "Не длиннее 300 символов"),
     client: z
-      .object({ id: z.number(), name: z.string(), segment: z.string().optional() })
+      .object({ id: z.number(), name: z.string(), segment: z.string().optional(), segment_id: z.number().optional() })
       .nullable()
       .refine((v) => v !== null, "Выберите клиента из списка или создайте нового"),
+    segment_id: z.string(),
     service_id: z.string().min(1, "Выберите услугу"),
     manager_id: z.string().min(1, "Выберите ответственного"),
     stage: z.union([z.enum(STAGES), z.literal("")]),
@@ -94,7 +96,8 @@ const SERVER_FIELD: Record<string, keyof FormValues> = { client_id: "client" };
 function fromProject(p?: Project, defaultManager?: number): FormValues {
   return {
     name: p?.name ?? "",
-    client: p ? { id: p.client.id, name: p.client.name, segment: p.segment.name } : null,
+    client: p ? { id: p.client.id, name: p.client.name } : null,
+    segment_id: p ? String(p.segment.id) : "",
     service_id: p ? String(p.service.id) : "",
     manager_id: p ? String(p.manager.id) : defaultManager ? String(defaultManager) : "",
     stage: p?.stage ?? "",
@@ -183,13 +186,16 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
   const persistedIdRef = useRef(project?.id);
+  const savedSegmentRef = useRef(project?.segment);
+  const savedManagerRef = useRef(project?.manager.id);
+  const savedYearRef = useRef(project?.implementation_year ?? null);
   const savingRef = useRef(false);
   const persistedId = project?.id ?? pendingProjectId;
   const financialBaseline = useRef(financialRowsFromProject(project));
   const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(financialBaseline.current);
   const financialDirty = JSON.stringify(financialEntries) !== JSON.stringify(financialBaseline.current);
 
-  const { register, control, handleSubmit, reset, setValue, setError, trigger, getValues, watch, formState } =
+  const { register, control, handleSubmit, reset, setValue, setError, clearErrors, trigger, getValues, watch, formState } =
     useForm<FormValues>({
       resolver: zodResolver(projectSchema(customerScheme)),
       mode: "onTouched", // ошибка появляется, как только пользователь ушёл с поля
@@ -201,6 +207,9 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   // Фоновое обновление не должно затирать несохранённый ввод.
   useEffect(() => {
     if (!project || hasUnsavedChanges || isSubmitting) return;
+    savedSegmentRef.current = project.segment;
+    savedManagerRef.current = project.manager.id;
+    savedYearRef.current = project.implementation_year ?? null;
     financialBaseline.current = financialRowsFromProject(project);
     setFinancialEntries(financialBaseline.current);
     reset(fromProject(project));
@@ -208,16 +217,17 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
   // Восстановление черновика новой карточки
   useEffect(() => {
-    if (!isNew || draftLoadedRef.current) return;
+    if (!isNew || !me || !refs || draftLoadedRef.current) return;
     draftLoadedRef.current = true;
     const draft = loadDraft();
     if (draft) {
       // Старый черновик не переносит шестистадийную схему в новый проект.
       const stage = refs?.customer_stages.find((item) => String(item.id) === draft.customer_stage_id);
-      reset({ ...draft, stage: "", probability: stage ? String(stage.probability) : "" }, { keepDefaultValues: true });
+      const managerId = isUser ? String(me.id) : refs.managers.some((item) => String(item.id) === draft.manager_id) ? draft.manager_id : "";
+      reset({ ...draft, segment_id: typeof draft.segment_id === "string" ? draft.segment_id : "", manager_id: managerId, stage: "", probability: stage ? String(stage.probability) : "" }, { keepDefaultValues: true });
       setDraftRestored(true);
     }
-  }, [isNew, reset, refs?.customer_stages]);
+  }, [isNew, isUser, me, refs, reset]);
 
   const values = watch();
   const submittedRef = useRef(false);
@@ -261,19 +271,36 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const submit = handleSubmit(async (v) => {
     setFormError(null);
     if (nameTaken) return;
-    const invalidEntry = financialEntries.find((entry) =>
+    const projectId = project?.id ?? persistedIdRef.current;
+    const sendFinancialEntries = projectId === undefined || financialDirty;
+    const invalidEntry = sendFinancialEntries && financialEntries.find((entry) =>
       !entry.amount.trim() || !Number.isFinite(Number(entry.amount)) || Number(entry.amount) < 0 ||
       !entry.status_id || !Number.isInteger(Number(entry.year)) || Number(entry.year) < 1900 || Number(entry.year) > 2200 ||
       !Number.isInteger(Number(entry.month)) || Number(entry.month) < 1 || Number(entry.month) > 12 ||
       (entry.kind === "cost" && (!entry.article_id || !entry.cost_type_id)),
     );
     if (invalidEntry) return setFormError("Заполните сумму и все справочные поля финансовых строк");
+    const selectedSegment = v.segment_id ? Number(v.segment_id) : undefined;
+    const retainedSegment = projectId !== undefined && selectedSegment === savedSegmentRef.current?.id;
+    if ((projectId !== undefined && selectedSegment === undefined) ||
+        (selectedSegment !== undefined && !retainedSegment && !refs?.segments.some((item) => item.id === selectedSegment))) {
+      setError("segment_id", { type: "manual", message: "Выберите доступный сегмент проекта" });
+      return;
+    }
+    const selectedManager = Number(v.manager_id);
+    const selectedYear = v.implementation_year ? Number(v.implementation_year) : null;
+    if (selectedManager !== savedManagerRef.current && !refs?.managers.some((item) => item.id === selectedManager)) {
+      setError("manager_id", { type: "manual", message: "Выберите доступного ответственного" });
+      return;
+    }
     const body = {
+      ...(projectId === undefined || selectedManager !== savedManagerRef.current ? { manager_id: selectedManager } : {}),
+      ...(projectId === undefined || selectedYear !== savedYearRef.current ? { implementation_year: selectedYear } : {}),
+      ...(selectedSegment !== undefined && !retainedSegment ? { segment_id: selectedSegment } : {}),
       name: v.name.trim(),
       description: v.description,
       client_id: v.client!.id,
       service_id: Number(v.service_id),
-      manager_id: Number(v.manager_id),
       ...(customerScheme
         ? { customer_stage_id: Number(v.customer_stage_id) }
         : { stage: v.stage, probability: Number(v.probability) }),
@@ -290,18 +317,16 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       is_industry_solution: v.is_industry_solution,
       industry_manager: v.is_industry_solution ? v.industry_manager.trim() || null : null,
       industry_project_number: v.is_industry_solution ? v.industry_project_number.trim() || null : null,
-      implementation_year: v.implementation_year ? Number(v.implementation_year) : null,
       project_status: v.project_status || null,
       realized_work: v.realized_work,
       period_plan: v.period_plan,
-      financial_entries: financialEntries.map((entry) => ({
+      ...(sendFinancialEntries ? { financial_entries: financialEntries.map((entry) => ({
         id: entry.id ?? null, kind: entry.kind, year: Number(entry.year), month: Number(entry.month), amount: entry.amount,
         vat_included: entry.vat_included, status_id: Number(entry.status_id),
         article_id: entry.kind === "cost" ? Number(entry.article_id) : null,
         cost_type_id: entry.kind === "cost" ? Number(entry.cost_type_id) : null,
-      })),
+      })) } : {}),
     };
-    const projectId = project?.id ?? persistedIdRef.current;
     let saved: Project;
     try {
       saved = projectId
@@ -327,6 +352,9 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
     // Ответ атомарного сохранения подтверждает и карточку, и полный список финансов.
     persistedIdRef.current = saved.id;
+    savedSegmentRef.current = saved.segment;
+    savedManagerRef.current = saved.manager.id;
+    savedYearRef.current = saved.implementation_year ?? null;
     if (isNew) setPendingProjectId(saved.id);
     const projectKey = ["project", String(saved.id)];
     await queryClient.cancelQueries({ queryKey: projectKey, exact: true });
@@ -351,11 +379,20 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const clearDraft = () => {
     setPendingProjectId(null);
     persistedIdRef.current = undefined;
+    savedSegmentRef.current = undefined;
+    savedManagerRef.current = undefined;
+    savedYearRef.current = null;
     setFormError(null);
     saveDraft(null);
     reset(fromProject(undefined, me?.id));
     setDraftRestored(false);
   };
+
+  const savedSegment = savedSegmentRef.current;
+  const selectedSegmentAvailable = refs?.segments.some((item) => String(item.id) === values.segment_id);
+  const savedSegmentSelected = savedSegment && String(savedSegment.id) === values.segment_id;
+  const inheritedInactive = values.client?.segment_id !== undefined &&
+    !refs?.segments.some((item) => item.id === values.client?.segment_id);
 
   const amount = isNumber(values.amount ?? "") ? toNumber(values.amount!) : null;
   const cost = values.cost?.trim() ? (isNumber(values.cost) ? toNumber(values.cost) : null) : 0;
@@ -410,8 +447,42 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
               {err("client") ? (
                 <div className="error">{err("client")}</div>
               ) : (
-                <div className="hint">{values.client?.segment ? `${label("segment")}: ${values.client.segment}` : ""}</div>
+                <div className="hint">{values.client?.segment ? `Сегмент клиента: ${values.client.segment}` : ""}</div>
               )}
+            </div>
+
+            <div className={cls("segment_id")}>
+              <label htmlFor="segment_id">{label("segment")} проекта</label>
+              <Controller
+                control={control}
+                name="segment_id"
+                render={({ field }) => <select
+                id="segment_id"
+                className="select"
+                aria-invalid={!!err("segment_id")}
+                aria-describedby="segment-project-hint segment-project-error"
+                {...field}
+                value={field.value ?? ""}
+                onChange={(event) => { field.onChange(event); clearErrors("segment_id"); }}
+              >
+                {isNew && !persistedId && <option value="">
+                  {values.client?.segment
+                    ? `По сегменту клиента: ${values.client.segment}${inheritedInactive ? " (неактивно)" : ""}`
+                    : "По сегменту клиента"}
+                </option>}
+                {savedSegment && !refs?.segments.some((item) => item.id === savedSegment.id) &&
+                  <option value={savedSegment.id}>{savedSegment.name} (неактивно)</option>}
+                {values.segment_id && !selectedSegmentAvailable && !savedSegmentSelected &&
+                  <option value={values.segment_id} disabled>Недоступный сегмент (ID {values.segment_id})</option>}
+                {refs?.segments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>}
+              />
+              <div id="segment-project-hint" className="hint">
+                {isNew && !persistedId
+                  ? "По умолчанию проект наследует сегмент выбранного клиента. Можно выбрать другой активный сегмент."
+                  : "Сегмент проекта не меняется при смене клиента."}
+              </div>
+              <div id="segment-project-error" className="error" role={err("segment_id") ? "alert" : undefined}>{err("segment_id")}</div>
             </div>
 
             <div className="row2">
@@ -433,16 +504,21 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 <label htmlFor="manager_id">{label("manager_id")} {req}</label>
                 {isUser ? (
                   // Пользователь ведёт только свои проекты.
-                  <input id="manager_id" className="input" readOnly value={project?.manager.full_name ?? me?.full_name ?? ""} />
+                  <input id="manager_id" className="input" readOnly value={project ? managerName(project.manager, refs) : me?.full_name ?? ""} />
                 ) : (
-                  <select id="manager_id" className="select" {...register("manager_id")}>
+                  <Controller control={control} name="manager_id" render={({ field }) => <select id="manager_id" className="select" {...field} value={field.value ?? ""}>
                     <option value="">— выберите —</option>
+                    {project?.manager && !refs?.managers.some((item) => item.id === project.manager.id) &&
+                      <option value={project.manager.id} disabled>{project.manager.full_name} (неактивен)</option>}
+                    {values.manager_id && String(project?.manager.id ?? "") !== values.manager_id &&
+                      !refs?.managers.some((item) => String(item.id) === values.manager_id) &&
+                      <option value={values.manager_id} disabled>{refs?.filter_managers?.find((item) => String(item.id) === values.manager_id)?.full_name ?? `Недоступный ответственный (ID ${values.manager_id})`} (недоступен)</option>}
                     {refs?.managers.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.full_name}
                       </option>
                     ))}
-                  </select>
+                  </select>} />
                 )}
                 <div className={isUser ? "hint" : "error"}>
                   {isUser ? "Пользователь ведёт свои проекты" : err("manager_id")}

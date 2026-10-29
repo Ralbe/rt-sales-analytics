@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.history_schemas import ProjectHistoryChange, ProjectHistoryItem
-from app.models import STAGE_LABELS, Client, Project, ReferenceValue, Service, User
+from app.models import STAGE_LABELS, Client, Project, ReferenceValue, Segment, Service, User
 from app.project_field_label_catalog import FIELD_LABELS
 from app.services.project_field_labels import (
     effective_project_field_labels,
@@ -25,8 +25,10 @@ PROJECT_FIELDS = {
         "realized_work", "period_plan", "archived_at",
     )
 }
+PROJECT_FIELDS["segment_id"] = FIELD_LABELS["segment"].default_label
 REFERENCE_MODELS = {
     "client_id": Client,
+    "segment_id": Segment,
     "manager_id": User,
     "service_id": Service,
     **dict.fromkeys(
@@ -179,7 +181,8 @@ class HistoryFormatter:
             )
             if field in before and field in after and unchanged:
                 continue
-            label = historical_field_label(field, after if field in after else before)
+            label_key = "segment" if field == "segment_id" else field
+            label = historical_field_label(label_key, after if field in after else before)
             changes.append(ProjectHistoryChange(field=field, label=label, before=old, after=new))
         return changes
 
@@ -265,6 +268,9 @@ def project_snapshot(db: Session, project: Project, *, field_labels: dict[str, s
         {field: getattr(project, field) for field in PROJECT_FIELDS},
         custom_encoder={Decimal: str},
     )
+    # Старые клиенты могут оставить segment_id пустым во время rollout.
+    if snapshot["segment_id"] is None:
+        snapshot["segment_id"] = db.scalar(select(Client.segment_id).where(Client.id == project.client_id))
     for field in ("amount", "cost"):
         snapshot[field] = decimal_text(snapshot[field], 2)
     snapshot["_stage_scheme"] = project.stage_scheme
@@ -276,6 +282,7 @@ def project_snapshot(db: Session, project: Project, *, field_labels: dict[str, s
     }
     return with_snapshot_field_labels(
         snapshot, effective_project_field_labels(db) if field_labels is None else field_labels,
+        keys=[*(field for field in snapshot if field in FIELD_LABELS), "segment"],
     )
 
 

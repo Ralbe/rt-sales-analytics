@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core import cache
@@ -23,7 +23,9 @@ STAGE_SCOPE = {"stage_scope": "legacy", "scope_note": LEGACY_STAGE_SCOPE_NOTE}
 
 
 def cache_key(name: str, filters: "Filters", **params) -> str:
-    return cache.make_key("analytics", fn=name, filters=filters, stage_scope="legacy", **params)
+    return cache.make_key(
+        "analytics", fn=name, filters=filters, stage_scope="legacy", segment_scope="project", **params,
+    )
 
 
 KPI_TITLES = {
@@ -50,6 +52,7 @@ class Filters:
 
 
 def load_frame(db: Session, f: Filters) -> pd.DataFrame:
+    segment_id = func.coalesce(Project.segment_id, Client.segment_id)
     q = select(
         Project.id,
         Project.amount,
@@ -58,14 +61,14 @@ def load_frame(db: Session, f: Filters) -> pd.DataFrame:
         Project.closed_at,
         Project.service_id,
         Project.manager_id,
-        Client.segment_id,
+        segment_id.label("segment_id"),
     ).join(Client, Client.id == Project.client_id).where(
         Project.archived_at.is_(None), Project.stage_scheme == "legacy",
     )
     if f.scope_manager_id is not None:
         q = q.where(Project.manager_id == f.scope_manager_id)
     if f.segment_ids:
-        q = q.where(Client.segment_id.in_(f.segment_ids))
+        q = q.where(segment_id.in_(f.segment_ids))
     if f.service_ids:
         q = q.where(Project.service_id.in_(f.service_ids))
     if f.manager_ids:

@@ -11,7 +11,7 @@ export function useMe(enabled = true) {
 }
 
 export function useRefs() {
-  return useQuery({ queryKey: ["refs"], queryFn: () => api<Refs>("/refs"), staleTime: 5 * 60_000 });
+  return useQuery({ queryKey: ["refs"], queryFn: () => api<Refs>("/refs"), staleTime: 5 * 60_000, refetchOnWindowFocus: "always" });
 }
 
 export function useDebounced<T>(value: T, delay = 300): T {

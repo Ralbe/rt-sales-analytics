@@ -24,8 +24,10 @@ def test_defaults_cover_project_history_and_financial_labels():
     from app.schemas import ProjectIn
     from app.services.project_history import PROJECT_FIELDS
 
-    assert set(ProjectIn.model_fields) <= FIELD_LABELS.keys()
-    assert set(PROJECT_FIELDS) <= FIELD_LABELS.keys()
+    # Технический segment_id использует одну существующую настройку подписи «segment».
+    assert set(ProjectIn.model_fields) - {"segment_id"} <= FIELD_LABELS.keys()
+    assert set(PROJECT_FIELDS) - {"segment_id"} <= FIELD_LABELS.keys()
+    assert "segment" in FIELD_LABELS and "segment_id" not in FIELD_LABELS
     assert {"margin", "margin_pct", "segment", "client_inn", "service_group", "created_at"} <= FIELD_LABELS.keys()
     assert FIELD_LABELS["amount"].suffix == ", ₽"
     assert FIELD_LABELS["financial_entries.amount"].suffix == ", тыс. ₽"
@@ -282,7 +284,8 @@ def test_financial_and_archive_events_keep_snapshot_labels(label_client, db):
     assert saved_financial["_field_labels"]
     assert all(key.startswith("financial_entries.") for key in saved_financial["_field_labels"])
     created = next(event for event in events if event.action == "create").payload["after"]
-    assert set(created["_field_labels"]) <= created.keys()
+    assert set(created["_field_labels"]) <= created.keys() | {"segment"}
+    assert created["segment_id"] is not None and "segment" in created["_field_labels"]
     saved_archive = next(event for event in events if event.action == "archive").payload
     assert set(saved_archive["before"]["_field_labels"]) == {"archived_at"}
 

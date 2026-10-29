@@ -62,6 +62,10 @@ class ManagerItem(ORM):
     full_name: str
 
 
+class FilterManagerItem(ManagerItem):
+    is_active: bool
+
+
 class ServiceItem(ORM):
     id: int
     name: str
@@ -92,6 +96,7 @@ class RefsOut(BaseModel):
     filter_segments: list[FilterRefItem]
     filter_services: list[FilterServiceItem]
     managers: list[ManagerItem]
+    filter_managers: list[FilterManagerItem]
     stages: list[StageItem]
     payment_types: list[RefItem]
     assessment_statuses: list[RefItem]
@@ -144,6 +149,7 @@ class ProjectIn(BaseModel):
     name: str = Field(min_length=3, max_length=300)
     description: str = Field(default="", max_length=5000)
     client_id: int
+    segment_id: int | None = None
     manager_id: int | None = None
     service_id: int
     stage: Stage | None = None

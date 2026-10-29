@@ -143,6 +143,7 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text, default="")
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
+    segment_id: Mapped[int | None] = mapped_column(ForeignKey("segments.id", name="fk_projects_segment_id_segments"))
     manager_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
     stage_scheme: Mapped[str] = mapped_column(String(10), default="customer", server_default="customer")
@@ -177,6 +178,7 @@ class Project(Base):
     )
 
     client: Mapped[Client] = relationship(lazy="joined")
+    segment: Mapped[Segment | None] = relationship(lazy="joined")
     manager: Mapped[User] = relationship(foreign_keys=[manager_id], lazy="joined")
     service: Mapped[Service] = relationship(lazy="joined")
     payment_type: Mapped[ReferenceValue | None] = relationship(foreign_keys=[payment_type_id], lazy="joined")

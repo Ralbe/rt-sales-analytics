@@ -180,6 +180,7 @@ test("AT-103: снимок содержит сохранённые поля, т�
   // Печать повторно проверяет доступ только через локальный API.
   const network: string[] = [];
   page.on("request", (request) => network.push(`${request.method()} ${request.url()}`));
+  await page.clock.setFixedTime(new Date("2026-10-26T09:30:00Z"));
   const printed = await preparePrint(page);
   await expect(printed.locator("h1")).toHaveText(PROJECT.name);
   await expect(printed).toContainText("Дата формирования: 26.10.2026, 12:30:00");

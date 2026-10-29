@@ -44,7 +44,7 @@ type ProjectWrite = Pick<Project, "name" | "description" | "amount" | "cost" |
   client_id: number;
   service_id: number;
   manager_id: number;
-  financial_entries: FinancialWrite[];
+  financial_entries?: FinancialWrite[];
   stage?: Project["stage"];
   probability?: number;
   customer_stage_id?: number;
@@ -132,8 +132,8 @@ async function mockApi(page: Page, editing = false, options: {
       }
       (method === "POST" ? state.creates : state.updates).push(body);
       state.writes.push(`${method} ${path}`);
-      expect(Array.isArray(body.financial_entries)).toBe(true);
-      for (const row of body.financial_entries) {
+      if (method === "POST") expect(Array.isArray(body.financial_entries)).toBe(true);
+      for (const row of body.financial_entries ?? []) {
         expect(Object.keys(row).sort()).toEqual([
           "amount", "article_id", "cost_type_id", "id", "kind", "month", "status_id", "vat_included", "year",
         ]);
@@ -151,13 +151,13 @@ async function mockApi(page: Page, editing = false, options: {
         ...(state.current ?? PROJECT), ...body,
         ...(customerScheme ? { stage_scheme: "customer", stage: null, customer_stage: REFS.customer_stages[0], probability: 30 } : {}),
         updated_at: "2026-10-25T12:00:00Z",
-        financial_entries: body.financial_entries.map((row, index) => ({
+        financial_entries: body.financial_entries?.map((row, index) => ({
           id: row.id ?? 30 + index, kind: row.kind, year: row.year, month: row.month,
           amount: Number(row.amount).toFixed(3), vat_included: row.vat_included,
           status: (row.kind === "revenue" ? REFS.revenue_statuses : REFS.cost_statuses).find((item) => item.id === row.status_id),
           article: REFS.cost_articles.find((item) => item.id === row.article_id) ?? null,
           cost_type: REFS.cost_types.find((item) => item.id === row.cost_type_id) ?? null,
-        })),
+        })) ?? state.current?.financial_entries ?? [],
       };
       if (method === "POST" && options.loseCreateResponse) return route.abort("failed");
       return route.fulfill({ status: method === "POST" ? 201 : 200, json: state.current });
@@ -457,7 +457,7 @@ test("canonical response нормализует финансовый baseline б
   await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toHaveValue("1234.500");
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
   await expect(saveMessage(page)).toHaveCount(0);
-  expect(state.updates[0].financial_entries[0].amount).toBe("1234.5");
+  expect(state.updates[0].financial_entries![0].amount).toBe("1234.5");
   expect(state.reads).toHaveLength(1);
   expect(state.unexpected).toEqual([]);
 });
@@ -496,7 +496,7 @@ test("подтверждённый POST и последующий сбой refet
   await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
   expect(state.creates).toHaveLength(1);
   expect(state.updates).toHaveLength(1);
-  expect(state.updates[0].financial_entries).toEqual(FINANCIAL_ROWS.map((row, index) => ({ ...row, id: 30 + index })));
+  expect(state.updates[0]).not.toHaveProperty("financial_entries");
   expect(state.writes).toEqual(["POST /projects", "PUT /projects/" + PROJECT.id]);
   expect(state.unexpected).toEqual([]);
 });
@@ -521,4 +521,38 @@ test("потерянный ответ создания сохраняет вво
   expect(state.updates).toEqual([]);
   expect(state.writes).toEqual(["POST /projects"]);
   expect(state.unexpected).toEqual([]);
+});
+
+
+test("неизменённые финансы не затирают параллельную правку и обновляют baseline после PUT", async ({ page }) => {
+  const state = await mockApi(page, true, { saveFailures: 0 });
+  await page.goto("/projects/" + PROJECT.id);
+  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toHaveValue("2500.500");
+
+  // Другая сессия изменила строку и добавила ещё одну после загрузки карточки.
+  state.current!.financial_entries[0].amount = "7777.000";
+  state.current!.financial_entries.push({ id: 22, kind: "revenue", year: 2028, month: 4,
+    amount: "42.000", vat_included: true, status: REFS.revenue_statuses[0] });
+  await page.getByLabel("Суть проекта").fill("Изменено только описание");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect.poll(() => state.updates.length).toBe(1);
+  expect(state.updates[0]).not.toHaveProperty("financial_entries");
+  expect(state.current!.financial_entries.map((item) => item.amount)).toEqual(["7777.000", "500.250", "42.000"]);
+  await expect(page.getByLabel("Сумма, тыс. ₽")).toHaveCount(3);
+  await expect(financialRow(page, 0).getByLabel("Сумма, тыс. ₽")).toHaveValue("7777.000");
+  await expect(financialRow(page, 2).getByLabel("Сумма, тыс. ₽")).toHaveValue("42.000");
+
+  // Полученные от сервера строки становятся новым baseline и не отправляются повторно.
+  await page.getByLabel("Суть проекта").fill("Второе изменение описания");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect.poll(() => state.updates.length).toBe(2);
+  expect(state.updates[1]).not.toHaveProperty("financial_entries");
+
+  // При действительном изменении отправляется полный список с актуальными ID.
+  await financialRow(page, 0).getByLabel("Сумма, тыс. ₽").fill("8000.000");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect.poll(() => state.updates.length).toBe(3);
+  expect(state.updates[2].financial_entries?.map((item) => item.id)).toEqual([20, 21, 22]);
+  expect(state.updates[2].financial_entries?.[0].amount).toBe("8000.000");
+  await expect(page.getByRole("button", { name: "Сохранить", exact: true })).toBeDisabled();
 });
