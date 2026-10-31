@@ -362,3 +362,67 @@ class DashboardOut(BaseModel):
     is_shared: bool
     editable: bool
     updated_at: datetime
+
+
+# --- Воронка, индикаторы и Гант ------------------------------------------
+
+
+class PipelineGroup(BaseModel):
+    key: str
+    label: str
+    count: int
+    amount: float
+    weighted_amount: float
+
+
+class PipelineStage(PipelineGroup):
+    probability: int | None
+    avg_days: float | None
+
+
+class PipelineTotals(BaseModel):
+    count: int
+    amount: float
+    weighted_amount: float
+    revenue: float
+    weighted_revenue: float
+
+
+class PipelineOut(BaseModel):
+    as_of: date
+    totals: PipelineTotals
+    by_stage: list[PipelineStage]
+    by_manager: list[PipelineGroup]
+    by_segment: list[PipelineGroup]
+    by_service: list[PipelineGroup]
+
+
+class GanttStage(BaseModel):
+    label: str
+    start: date
+    end: date
+
+
+class GanttMonth(BaseModel):
+    year: int
+    month: int
+    amount: float
+
+
+class GanttOut(BaseModel):
+    stages: list[GanttStage]
+    revenue: list[GanttMonth]
+    costs: list[GanttMonth]
+
+
+class PeriodChangeItem(BaseModel):
+    project_id: int
+    indicators: list[str]
+
+
+class PeriodChangesOut(BaseModel):
+    date_from: date
+    date_to: date
+    labels: dict[str, str]
+    counts: dict[str, int]
+    items: list[PeriodChangeItem]

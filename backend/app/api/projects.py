@@ -33,6 +33,7 @@ from app.models import (
 from app.project_write_schemas import ProjectSaveIn
 from app.schemas import (
     LEGACY_STAGE_SCOPE_NOTE,
+    GanttOut,
     NameCheckOut,
     ProjectFinancialEntryIn,
     ProjectFinancialEntryOut,
@@ -40,7 +41,7 @@ from app.schemas import (
     ProjectOut,
     ProjectPage,
 )
-from app.services import audit
+from app.services import audit, pipeline
 from app.services.project_field_label_export import PROJECT_EXPORT_FIELDS, write_project_export_headers
 from app.services.project_field_labels import (
     effective_project_field_labels,
@@ -361,6 +362,38 @@ def restore_project(
 @router.get("/{project_id}", response_model=ProjectOut)
 def get_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     return to_out(_get_visible(db, project_id, user))
+
+
+@router.get("/{project_id}/gantt", response_model=GanttOut)
+def get_project_gantt(
+    project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> dict:
+    project = _get_visible(db, project_id, user)
+    return pipeline.gantt(db, project, date.today())
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.admin)),
+) -> None:
+    """Окончательно удаляет проект из архива. Журнал сохраняет снимок карточки и финансов."""
+    user = lock_actor(db, user, roles={Role.admin})
+    project = _get_visible(db, project_id, user, for_update=True)
+    if project.archived_at is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Сначала переместите проект в архив")
+    field_labels = effective_project_field_labels(db)
+    audit.record(
+        db, user.id, "delete", "project", project.id,
+        name=project.name,
+        before=project_snapshot(db, project, field_labels=field_labels),
+        financial_entries=[financial_snapshot(row, field_labels=field_labels) for row in project.financial_entries],
+        author_name=user.full_name,
+    )
+    db.delete(project)
+    db.commit()
+    cache.bump("analytics")
 
 
 @router.get("/{project_id}/history", response_model=ProjectHistoryPage)
