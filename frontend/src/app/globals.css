@@ -229,3 +229,43 @@ h2 { font-size: 16px; margin: 0; font-weight: 600; }
   .report-print-records dt { font-weight: bold; }
   .report-print-records dd { margin: 0 0 3mm; white-space: pre-wrap; overflow-wrap: anywhere; }
 }
+
+/* Индикация изменений за период */
+.period-picker { border: 0; padding: 0; margin: 0 0 12px; }
+.period-picker legend { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.segmented { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.change-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.change-badges .badge { white-space: normal; }
+.badge.change-new { background: #efe5ff; color: #5a00c2; border-color: #d9c2ff; }
+.badge.change-removed { background: #fdecec; color: var(--bad); border-color: #f5caca; }
+.badge.change-stage_up, .badge.change-revenue_up { background: #e5f5ec; color: var(--good); border-color: #c4e8d4; }
+.badge.change-stage_down, .badge.change-revenue_down { background: #fff1e8; color: #c43c00; border-color: #ffd2bd; }
+.badge.change-industry { background: #e6f3fb; color: #1b6fa0; border-color: #c2e2f4; }
+.badge.change-implemented { background: #1a8f5a; color: #fff; border-color: #1a8f5a; }
+
+/* Стартовая страница */
+.overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.overview-kpis .card { padding: 14px 16px; }
+.overview-kpis .label { font-size: 13px; color: var(--muted); }
+.overview-kpis .kpi { height: auto; }
+.overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 12px; margin-bottom: 12px; }
+.overview-grid .card { padding: 12px 14px; overflow: auto; }
+.overview-grid h2 { font-size: 15px; margin: 0 0 8px; }
+.overview-chart { height: 300px; }
+.change-counts { display: flex; flex-wrap: wrap; gap: 8px; }
+.overview { margin-bottom: 12px; }
+.overview > summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+
+/* Диаграмма Ганта в карточке проекта */
+.gantt { padding: 12px 14px; margin: 12px 0; }
+.gantt h2 { font-size: 15px; margin: 0 0 8px; }
+.gantt-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr; gap: 8px; align-items: center; min-height: 26px; }
+.gantt-label { font-size: 13px; overflow-wrap: anywhere; }
+.gantt-track { position: relative; height: 18px; background: var(--surface-2); border-radius: 4px; }
+.gantt-scale .gantt-track { background: transparent; }
+.gantt-tick { position: absolute; top: 0; font-size: 11px; color: var(--muted); border-left: 1px solid var(--border); padding-left: 3px; }
+.gantt-bar { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
+.gantt-stage { background: #7700FF; }
+.gantt-revenue { background: #1a8f5a; }
+.gantt-cost { background: #FF4F12; }
+@media (max-width: 600px) { .gantt-row { grid-template-columns: 100px 1fr; } }

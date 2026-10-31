@@ -188,3 +188,36 @@ export interface Dashboard {
   editable: boolean;
   updated_at: string;
 }
+
+export interface PipelineGroup {
+  key: string;
+  label: string;
+  count: number;
+  amount: number;
+  weighted_amount: number;
+}
+
+export interface PipelineStage extends PipelineGroup {
+  probability: number | null;
+  avg_days: number | null;
+}
+
+export interface PipelineResponse {
+  as_of: string;
+  totals: { count: number; amount: number; weighted_amount: number; revenue: number; weighted_revenue: number };
+  by_stage: PipelineStage[];
+  by_manager: PipelineGroup[];
+  by_segment: PipelineGroup[];
+  by_service: PipelineGroup[];
+}
+
+export type ChangeIndicator =
+  | "new" | "removed" | "stage_up" | "stage_down" | "revenue_up" | "revenue_down" | "industry" | "implemented";
+
+export interface PeriodChangesResponse {
+  date_from: string;
+  date_to: string;
+  labels: Record<ChangeIndicator, string>;
+  counts: Record<ChangeIndicator, number>;
+  items: { project_id: number; indicators: ChangeIndicator[] }[];
+}

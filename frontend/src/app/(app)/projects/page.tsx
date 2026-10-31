@@ -3,9 +3,11 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { ChangeBadges } from "@/components/ChangeBadges";
 import { MultiSelect } from "@/components/MultiSelect";
+import { PipelineSummary } from "@/components/PipelineSummary";
 import { QueryState } from "@/components/QueryState";
 import { api, toQuery } from "@/lib/api";
 import { date } from "@/lib/format";
@@ -13,7 +15,7 @@ import { calendarPeriod, isPeriodDate, periodError, type PeriodPreset } from "@/
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import { managerName, managerFilterOptions, segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
-import type { ProjectPage, Stage } from "@/lib/types";
+import type { PeriodChangesResponse, ProjectPage, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 const COLUMN_FIELDS: Record<string, ProjectFieldKey> = {
@@ -53,6 +55,7 @@ const COLUMNS: { key: string; label: string; sort?: string; num?: boolean; width
   { key: "implementation_year", label: "Год реализации", sort: "implementation_year" },
   { key: "probability", label: "Вероятность, %", num: true },
   { key: "amount", label: "Сумма, ₽", sort: "amount", num: true, width: 210 },
+  { key: "weighted_amount", label: "С учётом вероятности, ₽", num: true, width: 210 },
   { key: "cost", label: "Себестоимость, ₽", num: true, width: 210 },
   { key: "margin", label: "Маржа, %", num: true },
   { key: "close", label: "План закрытия", sort: "expected_close_date" },
@@ -144,6 +147,18 @@ export default function ProjectsPage() {
     placeholderData: keepPreviousData,
   });
   const { data, isFetching } = projectsQuery;
+  const pipelineFilters = { segment_id: segments, service_id: services, manager_id: managers };
+  const changesQuery = useQuery({
+    queryKey: ["analytics", "changes", pipelineFilters, createdFrom, createdTo],
+    queryFn: () => api<PeriodChangesResponse>("/analytics/changes", {
+      query: { ...pipelineFilters, date_from: createdFrom, date_to: createdTo },
+    }),
+    enabled: Boolean(createdFrom && createdTo && !error),
+  });
+  const changes = useMemo(
+    () => new Map(changesQuery.data?.items.map((item) => [item.project_id, item.indicators] as const)),
+    [changesQuery.data],
+  );
 
   const withReset =
     <T,>(setter: (v: T) => void) =>
@@ -227,6 +242,10 @@ export default function ProjectsPage() {
       </div>
 
       <div className="page-body">
+        <details className="overview" open>
+          <summary>Показатели воронки (этапы 1–10, без архива)</summary>
+          <PipelineSummary filters={pipelineFilters} changes={createdFrom && createdTo && !error ? changesQuery.data : undefined} />
+        </details>
         <fieldset style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
           <legend>Отметить проекты, созданные за период (UTC)</legend>
           <div className="filters">
@@ -239,6 +258,7 @@ export default function ProjectsPage() {
           </div>
           <p className="hint">Неделя начинается в понедельник. Даты включаются полностью по UTC.</p>
           {error && <p className="error" role="alert">{error}</p>}
+          {changesQuery.error && <p className="hint">Не удалось загрузить индикаторы изменений за период.</p>}
         </fieldset>
         <label className="check">
           <input type="checkbox" checked={openOnly} aria-describedby="open-projects-scope" onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
@@ -262,7 +282,9 @@ export default function ProjectsPage() {
                     className={`${c.sort ? "sortable" : ""} ${c.num ? "num" : ""}`}
                     onClick={c.sort ? () => toggleSort(c.sort!) : undefined}
                   >
-                    {heading(COLUMN_FIELDS[c.key] ?? c.key as ProjectFieldKey)}
+                    {(COLUMN_FIELDS[c.key] ?? c.key) in PROJECT_FIELD_DEFAULTS
+                      ? heading(COLUMN_FIELDS[c.key] ?? c.key as ProjectFieldKey)
+                      : c.label}
                     {c.sort && sort.replace("-", "") === c.sort ? (sort.startsWith("-") ? " ↓" : " ↑") : ""}
                   </th>
                 ))}
@@ -271,7 +293,7 @@ export default function ProjectsPage() {
             <tbody style={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
               {data?.items.map((p) => (
                 <tr key={p.id} className="clickable" onClick={() => router.push(`/projects/${p.id}`)}>
-                  <td>{p.name}<CreationMarker value={p.created_at} from={error ? "" : createdFrom} to={createdTo} /></td>
+                  <td>{p.name}<CreationMarker value={p.created_at} from={error ? "" : createdFrom} to={createdTo} /><ChangeBadges indicators={changes.get(p.id)?.filter((key) => key !== "new")} /></td>
                   <td>{p.client.name}</td>
                   <td>{p.client_inn || "—"}</td>
                   <td>{p.segment.name}</td>
@@ -289,6 +311,7 @@ export default function ProjectsPage() {
                   <td>{p.implementation_year ?? "—"}</td>
                   <td className="num">{p.probability}%</td>
                   <td className="num">{fullAmount(p.amount)}</td>
+                  <td className="num">{fullAmount(String(Number(p.amount) * p.probability / 100))}</td>
                   <td className="num">{fullAmount(p.cost)}</td>
                   <td className="num">{p.margin_pct === null ? "—" : `${p.margin_pct}%`}</td>
                   <td>{date(p.expected_close_date)}</td>
