@@ -16,13 +16,12 @@ def test_kpi_has_three_metrics_with_yoy(as_analyst):
     assert body["items"][0]["value"] > 0
 
 
-def test_trend_history_and_forecast(as_analyst):
+def test_trend_history_without_forecast(as_analyst):
     r = as_analyst.get("/api/analytics/trend", params={"as_of": AS_OF, "weeks": 4, "horizon": 7})
     body = r.json()
     assert len(body["history"]) == 28
-    assert len(body["forecast"]) == 7
+    assert body["forecast"] == [] and body["method"] == "none"
     assert body["history"][-1]["date"] == AS_OF
-    assert all(p["lower"] <= p["value"] <= p["upper"] for p in body["forecast"])
 
 
 def test_breakdown_sums_to_kpi(as_analyst):

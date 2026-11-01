@@ -3,6 +3,9 @@
 Проект считается «в воронке» на дату D, если start_date <= D и он ещё не закрыт
 (closed_at пуст или closed_at > D). Это позволяет восстановить состояние воронки
 на любую дату в прошлом без отдельных снапшотов.
+
+Учитываются проекты обеих схем. У проекта на этапах заказчика датой закрытия считается
+день перехода на этап «Успех» по журналу изменений; такой проект считается выигранным.
 """
 
 import warnings
@@ -15,16 +18,17 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core import cache
-from app.models import STAGE_LABELS, Client, Project, Segment, Service, Stage, User
-from app.schemas import LEGACY_STAGE_SCOPE_NOTE
+from app.models import STAGE_LABELS, Client, Project, ReferenceValue, Segment, Service, Stage, User
+from app.schemas import ANALYTICS_SCOPE_NOTE
+from app.services.pipeline import SUCCESS_STAGE_CODE, _day, project_events, stage_timeline
 
 FIT_WINDOW_DAYS = 180
-STAGE_SCOPE = {"stage_scope": "legacy", "scope_note": LEGACY_STAGE_SCOPE_NOTE}
+STAGE_SCOPE = {"stage_scope": "all", "scope_note": ANALYTICS_SCOPE_NOTE}
 
 
 def cache_key(name: str, filters: "Filters", **params) -> str:
     return cache.make_key(
-        "analytics", fn=name, filters=filters, stage_scope="legacy", segment_scope="project", **params,
+        "analytics", fn=name, filters=filters, stage_scope="all", segment_scope="project", **params,
     )
 
 
@@ -65,6 +69,18 @@ def load_frame(db: Session, f: Filters) -> pd.DataFrame:
     ).join(Client, Client.id == Project.client_id).where(
         Project.archived_at.is_(None), Project.stage_scheme == "legacy",
     )
+    q = _apply_filters(q, f, segment_id)
+    columns = ["id", "amount", "stage", "start_date", "closed_at", "service_id", "manager_id", "segment_id"]
+    rows = list(db.execute(q).all()) + _customer_rows(db, f)
+    df = pd.DataFrame(rows, columns=columns)
+    df["amount"] = df["amount"].astype(float)
+    df["stage"] = df["stage"].map(lambda s: s.value if isinstance(s, Stage) else s)
+    df["start_date"] = pd.to_datetime(df["start_date"])
+    df["closed_at"] = pd.to_datetime(df["closed_at"])
+    return df
+
+
+def _apply_filters(q, f: Filters, segment_id):
     if f.scope_manager_id is not None:
         q = q.where(Project.manager_id == f.scope_manager_id)
     if f.segment_ids:
@@ -73,14 +89,34 @@ def load_frame(db: Session, f: Filters) -> pd.DataFrame:
         q = q.where(Project.service_id.in_(f.service_ids))
     if f.manager_ids:
         q = q.where(Project.manager_id.in_(f.manager_ids))
+    return q
 
-    columns = ["id", "amount", "stage", "start_date", "closed_at", "service_id", "manager_id", "segment_id"]
-    df = pd.DataFrame(db.execute(q).all(), columns=columns)
-    df["amount"] = df["amount"].astype(float)
-    df["stage"] = df["stage"].map(lambda s: s.value if isinstance(s, Stage) else s)
-    df["start_date"] = pd.to_datetime(df["start_date"])
-    df["closed_at"] = pd.to_datetime(df["closed_at"])
-    return df
+
+def customer_stage_key(stage_id: int) -> str:
+    return f"customer:{stage_id}"
+
+
+def _customer_rows(db: Session, f: Filters) -> list[tuple]:
+    """Проекты на этапах заказчика в формате прежней воронки: «Успех» = выигран с датой перехода."""
+    segment_id = func.coalesce(Project.segment_id, Client.segment_id)
+    q = select(Project).join(Client, Client.id == Project.client_id).where(
+        Project.archived_at.is_(None), Project.stage_scheme == "customer",
+    )
+    projects = list(db.scalars(_apply_filters(q, f, segment_id)).unique().all())
+    success = [p for p in projects if p.customer_stage and p.customer_stage.code == SUCCESS_STAGE_CODE]
+    events = project_events(db, [p.id for p in success])
+    rows = []
+    for p in projects:
+        segment = p.segment_id or p.client.segment_id
+        if p in success:
+            timeline = stage_timeline(p, events.get(p.id, []))
+            reached = next((at for at, stage_id in reversed(timeline) if stage_id == p.customer_stage_id), None)
+            closed = max(_day(reached), p.start_date) if reached is not None else p.start_date
+            rows.append((p.id, p.amount, Stage.won.value, p.start_date, closed, p.service_id, p.manager_id, segment))
+        else:
+            stage = customer_stage_key(p.customer_stage_id)
+            rows.append((p.id, p.amount, stage, p.start_date, None, p.service_id, p.manager_id, segment))
+    return rows
 
 
 def year_ago(d: date) -> date:
@@ -183,20 +219,11 @@ def trend(db: Session, f: Filters, as_of: date, weeks: int, horizon: int, metric
     hist_start = as_of - timedelta(days=weeks * 7 - 1)
     series = daily_series(df, min(fit_start, hist_start), as_of, metric)
 
-    pred, band, method = forecast(series[pd.Timestamp(fit_start) :], horizon)
+    # Прогноз по решению заказчика не показывается: виджет отражает только фактическую динамику.
     digits = 2 if metric == "funnel" else 1
     shown = series[pd.Timestamp(hist_start) :]
     history = [{"date": ts.date(), "value": round(float(v), digits)} for ts, v in shown.items()]
-    future = [
-        {
-            "date": as_of + timedelta(days=i + 1),
-            "value": round(max(float(p), 0.0), digits),
-            "lower": round(max(float(p - b), 0.0), digits),
-            "upper": round(max(float(p + b), 0.0), digits),
-        }
-        for i, (p, b) in enumerate(zip(pred, band, strict=False))
-    ]
-    return {"metric": metric, "history": history, "forecast": future, "method": method, **STAGE_SCOPE}
+    return {"metric": metric, "history": history, "forecast": [], "method": "none", **STAGE_SCOPE}
 
 
 def _labels(db: Session, group_by: str) -> dict:
@@ -206,7 +233,11 @@ def _labels(db: Session, group_by: str) -> dict:
         return dict(db.execute(select(Service.id, Service.name)).all())
     if group_by == "manager":
         return dict(db.execute(select(User.id, User.full_name)).all())
-    return {s.value: label for s, label in STAGE_LABELS.items()}
+    labels = {s.value: label for s, label in STAGE_LABELS.items()}
+    stages = db.execute(select(ReferenceValue.id, ReferenceValue.name).where(
+        ReferenceValue.category == "customer_stage",
+    )).all()
+    return labels | {customer_stage_key(stage_id): name for stage_id, name in stages}
 
 
 def breakdown(db: Session, f: Filters, as_of: date, group_by: str, metric: str) -> dict:

@@ -11,15 +11,17 @@ from app.deps import get_current_user, manager_scope
 from app.models import User
 from app.schemas import (
     BreakdownOut,
+    FailuresOut,
     GroupBy,
     KpiKey,
     KpiOut,
     PeriodChangesOut,
     PipelineOut,
+    ProfitOut,
     TrendMetric,
     TrendOut,
 )
-from app.services import analytics, pipeline
+from app.services import analytics, outcomes, pipeline
 from app.services.analytics import Filters
 from app.services.pipeline import PipelineFilters
 
@@ -133,3 +135,24 @@ def period_changes(
     if date_from > date_to:
         raise HTTPException(422, {"field": "date_from", "message": "Начало периода позже конца"})
     return pipeline.period_changes(db, f, date_from, date_to)
+
+
+@router.get("/profit", response_model=ProfitOut)
+def project_profit(
+    limit: int = Query(default=10, ge=1, le=50),
+    f: Filters = Depends(get_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Прибыль по проектам: выручка минус затраты по месячным строкам."""
+    return outcomes.profit(db, f, limit)
+
+
+@router.get("/failures", response_model=FailuresOut)
+def project_failures(
+    limit: int = Query(default=20, ge=1, le=100),
+    as_of: date | None = None,
+    f: Filters = Depends(get_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Невыполненные проекты и их причины."""
+    return outcomes.failures(db, f, as_of or date.today(), limit)

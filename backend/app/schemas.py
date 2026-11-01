@@ -7,6 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.security import inn_is_valid
 from app.models import Role, Stage
 
+ANALYTICS_SCOPE_NOTE = (
+    "Динамика выполнения проектов: учтены проекты в работе на всех этапах. "
+    "Остальные проекты (завершённые и снятые) не включены."
+)
 LEGACY_STAGE_SCOPE_NOTE = (
     "Показатели рассчитаны только по проектам с прежними шестью стадиями. "
     "Проекты с новыми этапами не включены."
@@ -287,8 +291,8 @@ class KpiItem(BaseModel):
 
 
 class AnalyticsScope(BaseModel):
-    stage_scope: Literal["legacy"] = "legacy"
-    scope_note: str = LEGACY_STAGE_SCOPE_NOTE
+    stage_scope: Literal["legacy", "all"] = "all"
+    scope_note: str = ANALYTICS_SCOPE_NOTE
 
 
 class KpiOut(AnalyticsScope):
@@ -426,3 +430,68 @@ class PeriodChangesOut(BaseModel):
     labels: dict[str, str]
     counts: dict[str, int]
     items: list[PeriodChangeItem]
+
+
+# --- Прибыль и причины невыполнения --------------------------------------
+
+
+class ProfitRow(BaseModel):
+    key: str
+    label: str
+    count: int
+    revenue: float
+    costs: float
+    profit: float
+    margin_pct: float | None
+
+
+class ProfitProject(BaseModel):
+    project_id: int
+    name: str
+    client: str
+    stage: str
+    status: str
+    revenue: float
+    costs: float
+    profit: float
+    margin_pct: float | None
+
+
+class ProfitOut(BaseModel):
+    groups: list[ProfitRow]
+    total: ProfitRow
+    items: list[ProfitProject]
+
+
+class FailureGroup(BaseModel):
+    label: str
+    count: int
+    amount: float
+
+
+class FailureReason(FailureGroup):
+    key: str
+
+
+class FailureProject(BaseModel):
+    project_id: int
+    name: str
+    client: str
+    reason: str
+    reason_label: str
+    stage: str
+    segment: str
+    manager: str
+    amount: float
+    days_on_stage: int | None
+    archived_at: date | None
+
+
+class FailuresOut(BaseModel):
+    total: int
+    by_reason: list[FailureReason]
+    by_stage: list[FailureGroup]
+    by_segment: list[FailureGroup]
+    by_manager: list[FailureGroup]
+    items: list[FailureProject]
+    stall_rule: str

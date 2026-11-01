@@ -11,7 +11,7 @@ from app.api import analytics as analytics_api
 from app.api import projects
 from app.main import app
 from app.models import AuditLog, Project, ReferenceValue, Stage
-from app.schemas import LEGACY_STAGE_SCOPE_NOTE
+from app.schemas import ANALYTICS_SCOPE_NOTE, LEGACY_STAGE_SCOPE_NOTE
 from app.services import analytics
 from app.services.project_field_labels import same_project_values
 from app.services.project_history import PROJECT_FIELDS, project_snapshot
@@ -223,24 +223,22 @@ def test_openapi_stage_scheme_is_readonly_literal_and_stage_nullable():
     assert "stage_scheme" not in schemas["ProjectSaveIn"]["properties"]
 
 
-def test_all_analytics_ignore_customer_projects_on_cache_miss_and_hit(as_analyst, db, monkeypatch):
+def test_all_analytics_include_customer_projects_in_progress(as_analyst, db, monkeypatch):
     stored = {}
     monkeypatch.setattr(analytics_api.cache, "get_json", stored.get)
     monkeypatch.setattr(analytics_api.cache, "set_json", lambda key, value: stored.__setitem__(key, value))
-    paths = ("kpi", "trend", "breakdown")
-    before = {path: as_analyst.get(f"/api/analytics/{path}", params={"as_of": "2026-10-21"}).json() for path in paths}
-    _create(as_analyst, db, amount="999999999999.99", start_date="2026-01-01")
-    for hit in (False, True):
-        if not hit:
-            stored.clear()
-        for path in paths:
-            response = as_analyst.get(f"/api/analytics/{path}", params={"as_of": "2026-10-21"})
-            assert response.status_code == 200
-            assert response.json() == before[path]
-            assert response.json()["stage_scope"] == "legacy"
-            assert response.json()["scope_note"] == LEGACY_STAGE_SCOPE_NOTE
+    params = {"as_of": "2026-10-21"}
+    before = as_analyst.get("/api/analytics/kpi", params=params).json()
+    created = _create(as_analyst, db, amount="1000000.00", start_date="2026-01-01")
+    stored.clear()
+    after = as_analyst.get("/api/analytics/kpi", params=params).json()
+    assert after["stage_scope"] == "all" and after["scope_note"] == ANALYTICS_SCOPE_NOTE
+    funnel = {item["key"]: item for item in after["items"]}["funnel"]["value"]
+    assert round(funnel - {item["key"]: item for item in before["items"]}["funnel"]["value"], 2) == 1_000_000
     frame = analytics.load_frame(db, analytics.Filters())
-    assert len(frame) == 300
+    assert len(frame) == 301 and created["id"] in set(frame.id)
+    stage = frame.set_index("id").loc[created["id"], "stage"]
+    assert stage == analytics.customer_stage_key(created["customer_stage"]["id"])
 
 
 def test_analytics_cache_keys_include_scope_and_worker_uses_same_key(monkeypatch, db):
@@ -262,7 +260,7 @@ def test_analytics_cache_keys_include_scope_and_worker_uses_same_key(monkeypatch
 
     monkeypatch.setattr(analytics.cache, "make_key", scoped_key)
     worker.warm_analytics_cache()
-    assert len(saved) == 7 and all(parts["stage_scope"] == "legacy" for parts in calls)
+    assert len(saved) == 7 and all(parts["stage_scope"] == "all" for parts in calls)
     # Подключаем чтение прогретого результата для проверки общего ключа API/Celery.
     monkeypatch.setattr(analytics_api.cache, "get_json", saved.get)
     result = analytics_api.cached("kpi", analytics.Filters(), lambda: pytest.fail("Ключ прогрева не совпал"),
