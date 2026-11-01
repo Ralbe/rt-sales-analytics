@@ -149,7 +149,8 @@ h2 { font-size: 16px; margin: 0; font-weight: 600; }
   .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; overflow: visible; }
   .main { height: auto; overflow: visible; }
   .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 12px; }
-  .sidebar .section, .sidebar .user { display: none; }
+  .sidebar .section { display: none; }
+  .sidebar .user { width: 100%; margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
   .sidebar a, .sidebar button.link { width: auto; }
   .form-grid { grid-template-columns: 1fr; }
   .page-header, .page-body { padding-left: 16px; padding-right: 16px; }
@@ -269,3 +270,15 @@ h2 { font-size: 16px; margin: 0; font-weight: 600; }
 .gantt-revenue { background: #1a8f5a; }
 .gantt-cost { background: #FF4F12; }
 @media (max-width: 600px) { .gantt-row { grid-template-columns: 100px 1fr; } }
+
+/* Прибыль и причины невыполнения */
+.table .negative { color: var(--bad); }
+.failure-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.failure-groups ul { margin: 4px 0 0; padding-left: 16px; }
+
+/* Выбор шрифта */
+.font-settings-toggle { margin-top: 6px; }
+.font-settings-toggle > summary { cursor: pointer; font-size: 12px; opacity: .85; }
+.font-settings { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; }
+.font-settings label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; opacity: .85; }
+.font-settings .input { height: 28px; padding: 0 6px; font-size: 12px; width: auto; max-width: 150px; }

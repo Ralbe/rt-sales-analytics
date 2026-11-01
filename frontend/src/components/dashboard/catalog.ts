@@ -2,13 +2,15 @@ import type { ChartKind, GroupBy, KpiKey, Widget, WidgetConfig, WidgetType } fro
 
 export const WIDGET_TYPES: { id: WidgetType; name: string }[] = [
   { id: "kpi", name: "Показатель (KPI)" },
-  { id: "trend", name: "Динамика воронки и прогноз" },
+  { id: "trend", name: "Динамика проектов" },
   { id: "breakdown", name: "Разбивка (диаграмма)" },
   { id: "projects", name: "Крупнейшие проекты" },
+  { id: "profit", name: "Прибыль по проектам" },
+  { id: "failures", name: "Почему проекты не выполнены" },
 ];
 
 export const METRICS: { id: KpiKey; name: string }[] = [
-  { id: "funnel", name: "Объём воронки" },
+  { id: "funnel", name: "Воронка проектов" },
   { id: "projects", name: "Количество проектов" },
   { id: "won_ytd", name: "Выиграно с начала года" },
 ];
@@ -39,6 +41,8 @@ const SIZES: Record<WidgetType, { w: number; h: number }> = {
   trend: { w: 7, h: 5 },
   breakdown: { w: 5, h: 5 },
   projects: { w: 6, h: 5 },
+  profit: { w: 6, h: 5 },
+  failures: { w: 6, h: 5 },
 };
 
 export function defaultConfig(type: WidgetType): WidgetConfig {
@@ -46,10 +50,12 @@ export function defaultConfig(type: WidgetType): WidgetConfig {
     case "kpi":
       return { metric: "funnel" };
     case "trend":
-      return { metric: "funnel", weeks: 6, horizon: 14, chart: "line" };
+      return { metric: "funnel", weeks: 6, chart: "line" };
     case "breakdown":
       return { metric: "funnel", group_by: "segment", chart: "bar" };
     case "projects":
+    case "profit":
+    case "failures":
       return { limit: 8 };
   }
 }
@@ -60,11 +66,17 @@ export function autoTitle(type: WidgetType, c: WidgetConfig): string {
     case "kpi":
       return metric;
     case "trend":
-      return `${c.metric === "projects" ? "Число проектов" : "Объём воронки"}: ${c.weeks} нед. + прогноз ${c.horizon} дн.`;
+      return `Динамика проектов: ${c.metric === "projects" ? "число" : "сумма"} за ${c.weeks} нед.`;
     case "breakdown":
-      return `${metric} по ${GROUPS.find((g) => g.id === c.group_by)?.name ?? ""}`;
+      return c.group_by === "segment"
+        ? "Распределение по сегментам"
+        : `${metric} по ${GROUPS.find((g) => g.id === c.group_by)?.name ?? ""}`;
     case "projects":
       return "Крупнейшие проекты в работе";
+    case "profit":
+      return "Прибыль по проектам";
+    case "failures":
+      return "Почему проекты не выполнены";
   }
 }
 

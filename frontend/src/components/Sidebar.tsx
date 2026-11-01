@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import { api, post } from "@/lib/api";
+import { FontSettings } from "@/components/FontSettings";
 import { QueryState } from "@/components/QueryState";
 import { ROLE_LABELS, canConfigureDashboards, canEditProjects } from "@/lib/hooks";
 import type { Dashboard, User } from "@/lib/types";
@@ -103,6 +104,7 @@ export function Sidebar({ user }: { user: User }) {
       <div className="user">
         <div>{user.full_name}</div>
         <div className="role">{ROLE_LABELS[user.role]}</div>
+        <FontSettings />
         <button className="link" style={{ padding: "8px 0 0" }} onClick={logout}>
           Выйти
         </button>

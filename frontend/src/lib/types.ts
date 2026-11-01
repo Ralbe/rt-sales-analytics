@@ -126,7 +126,7 @@ export interface KpiItem {
 }
 
 export interface AnalyticsScope {
-  stage_scope?: "legacy";
+  stage_scope?: "legacy" | "all";
   scope_note?: string;
 }
 
@@ -149,7 +149,7 @@ export interface BreakdownResponse extends AnalyticsScope {
   items: { key: string; label: string; value: number }[];
 }
 
-export type WidgetType = "kpi" | "trend" | "breakdown" | "projects";
+export type WidgetType = "kpi" | "trend" | "breakdown" | "projects" | "profit" | "failures";
 export type ChartKind = "bar" | "hbar" | "donut" | "pie" | "line" | "table";
 
 export interface WidgetConfig {
@@ -220,4 +220,34 @@ export interface PeriodChangesResponse {
   labels: Record<ChangeIndicator, string>;
   counts: Record<ChangeIndicator, number>;
   items: { project_id: number; indicators: ChangeIndicator[] }[];
+}
+
+export interface ProfitRow {
+  key: string;
+  label: string;
+  count: number;
+  revenue: number;
+  costs: number;
+  profit: number;
+  margin_pct: number | null;
+}
+
+export interface ProfitResponse {
+  groups: ProfitRow[];
+  total: ProfitRow;
+  items: { project_id: number; name: string; client: string; stage: string; status: string;
+    revenue: number; costs: number; profit: number; margin_pct: number | null }[];
+}
+
+export interface FailureGroup { label: string; count: number; amount: number }
+
+export interface FailuresResponse {
+  total: number;
+  by_reason: (FailureGroup & { key: string })[];
+  by_stage: FailureGroup[];
+  by_segment: FailureGroup[];
+  by_manager: FailureGroup[];
+  items: { project_id: number; name: string; client: string; reason: string; reason_label: string; stage: string;
+    segment: string; manager: string; amount: number; days_on_stage: number | null; archived_at: string | null }[];
+  stall_rule: string;
 }

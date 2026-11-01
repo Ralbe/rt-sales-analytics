@@ -7,10 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.security import inn_is_valid
 from app.models import Role, Stage
 
-ANALYTICS_SCOPE_NOTE = (
-    "Динамика выполнения проектов: учтены проекты в работе на всех этапах. "
-    "Остальные проекты (завершённые и снятые) не включены."
-)
+ANALYTICS_SCOPE_NOTE = "Динамика выполнения проектов. Остальные проекты (завершённые и снятые) не включены."
 LEGACY_STAGE_SCOPE_NOTE = (
     "Показатели рассчитаны только по проектам с прежними шестью стадиями. "
     "Проекты с новыми этапами не включены."
@@ -335,7 +332,7 @@ class BreakdownOut(AnalyticsScope):
 
 class Widget(BaseModel):
     id: str = Field(min_length=1, max_length=64)
-    type: Literal["kpi", "trend", "breakdown", "projects"]
+    type: Literal["kpi", "trend", "breakdown", "projects", "profit", "failures"]
     title: str = Field(max_length=200)
     x: int = Field(ge=0, le=11)
     y: int = Field(ge=0, le=100)

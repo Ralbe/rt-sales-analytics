@@ -52,7 +52,7 @@ export function WidgetDialog({ widget, onSave, onClose }: Props) {
           </div>
         )}
 
-        {type !== "projects" && (
+        {type !== "projects" && type !== "profit" && type !== "failures" && (
           <div className="field">
             <label>Показатель</label>
             <select className="select" value={config.metric} onChange={(e) => set({ metric: e.target.value as KpiKey })}>
@@ -103,20 +103,10 @@ export function WidgetDialog({ widget, onSave, onClose }: Props) {
                 ))}
               </select>
             </div>
-            <div className="field">
-              <label>Горизонт прогноза</label>
-              <select className="select" value={config.horizon} onChange={(e) => set({ horizon: Number(e.target.value) })}>
-                {[7, 14, 21, 30].map((h) => (
-                  <option key={h} value={h}>
-                    {h} дней
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
         )}
 
-        {type === "projects" && (
+        {(type === "projects" || type === "profit" || type === "failures") && (
           <div className="field">
             <label>Сколько проектов показывать</label>
             <select className="select" value={config.limit} onChange={(e) => set({ limit: Number(e.target.value) })}>

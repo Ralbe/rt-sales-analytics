@@ -16,7 +16,7 @@ export function Chart({ option, printable = false }: { option: EChartsOption; pr
         theme="v5"
         option={{
           color: PALETTE,
-          textStyle: { fontFamily: "Inter, system-ui, sans-serif" },
+          textStyle: { fontFamily: (typeof document !== "undefined" && getComputedStyle(document.documentElement).getPropertyValue("--font").trim()) || "Inter, system-ui, sans-serif" },
           animationDuration: 300,
           ...option,
           ...(printable ? { animation: false } : {}),

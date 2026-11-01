@@ -2,10 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { EChartsOption } from "echarts";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { Chart, PALETTE } from "@/components/Chart";
+import { Chart } from "@/components/Chart";
 import { api } from "@/lib/api";
 import { count, date, money, pct } from "@/lib/format";
 import { managerName } from "@/lib/reference-options";
@@ -15,7 +16,9 @@ import type {
   BreakdownResponse,
   AnalyticsScope,
   DashboardFilters,
+  FailuresResponse,
   KpiResponse,
+  ProfitResponse,
   ProjectPage,
   Refs,
   TrendResponse,
@@ -80,68 +83,43 @@ export function KpiView({ widget, data }: { widget: Widget; data: KpiResponse })
 }
 
 export function TrendWidget({ widget, filters }: Props) {
-  const { metric = "funnel", weeks = 6, horizon = 14 } = widget.config;
+  const { metric = "funnel", weeks = 6 } = widget.config;
   const q = useQuery({
     queryKey: widgetQueryKey(widget, filters),
-    queryFn: () =>
-      api<TrendResponse>("/analytics/trend", { query: { ...filterQuery(filters), metric, weeks, horizon } }),
+    queryFn: () => api<TrendResponse>("/analytics/trend", { query: { ...filterQuery(filters), metric, weeks } }),
   });
   if (!q.data) return <State loading={q.isLoading} error={q.error} />;
   return <TrendView widget={widget} data={q.data} />;
 }
 
+/** Фактическая динамика проектов в работе; прогноз по решению заказчика не строится. */
 export function TrendView({ widget, data, printable = false }: { widget: Widget; data: TrendResponse; printable?: boolean }) {
   const { metric = "funnel", chart = "line" } = widget.config;
-  const { history, forecast } = data;
+  const { history } = data;
   const f = fmt(metric);
-  const dates = [...history, ...forecast].map((p) => date(p.date).slice(0, 5));
-  const pad = (n: number) => Array<null>(n).fill(null);
-  const last = history[history.length - 1];
-  // Прогноз стыкуется с последней фактической точкой, чтобы линия была непрерывной
-  const forecastLine = [...pad(history.length - 1), last?.value ?? null, ...forecast.map((p) => p.value)];
-  const lower = [...pad(history.length), ...forecast.map((p) => p.lower)];
-  const band = [...pad(history.length), ...forecast.map((p) => p.upper - p.lower)];
-
   const option: EChartsOption = {
-    grid: { left: 8, right: 16, top: 28, bottom: 4, containLabel: true },
-    legend: { top: 0, right: 0, itemWidth: 14, data: ["Факт", "Прогноз"] },
-    tooltip: {
-      trigger: "axis",
-      valueFormatter: (v) => (v === null || v === undefined ? "—" : f(Number(v))),
+    grid: { left: 8, right: 16, top: 12, bottom: 4, containLabel: true },
+    tooltip: { trigger: "axis", valueFormatter: (v) => (v === null || v === undefined ? "—" : f(Number(v))) },
+    xAxis: {
+      type: "category", data: history.map((p) => date(p.date).slice(0, 5)), boundaryGap: chart === "bar",
+      axisLabel: { hideOverlap: true },
     },
-    xAxis: { type: "category", data: dates, boundaryGap: chart === "bar", axisLabel: { hideOverlap: true } },
     yAxis: { type: "value", scale: true, axisLabel: { formatter: (v: number) => f(v) } },
-    series: [
-      {
-        name: "Факт",
-        type: chart === "bar" ? "bar" : "line",
-        data: [...history.map((p) => p.value), ...pad(forecast.length)],
-        showSymbol: false,
-        smooth: true,
-        areaStyle: chart === "bar" ? undefined : { opacity: 0.08 },
-      },
-      {
-        name: "Прогноз",
-        type: "line",
-        data: forecastLine,
-        showSymbol: false,
-        lineStyle: { type: "dashed" },
-        smooth: true,
-      },
-      { name: "lower", type: "line", data: lower, stack: "band", lineStyle: { opacity: 0 }, symbol: "none", tooltip: { show: false } },
-      {
-        name: "Диапазон",
-        type: "line",
-        data: band,
-        stack: "band",
-        lineStyle: { opacity: 0 },
-        symbol: "none",
-        areaStyle: { color: PALETTE[1], opacity: 0.15 },
-        tooltip: { show: false },
-      },
-    ],
+    series: [{
+      name: metric === "projects" ? "Проектов в работе" : "Сумма проектов в работе",
+      type: chart === "bar" ? "bar" : "line",
+      data: history.map((p) => p.value),
+      showSymbol: false,
+      smooth: true,
+      areaStyle: chart === "bar" ? undefined : { opacity: 0.08 },
+    }],
   };
-  return <AnalyticsFrame data={data} printable={printable}><Chart option={option} printable={printable} /></AnalyticsFrame>;
+  return (
+    <div style={{ height: printable ? undefined : "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {data.scope_note && <p className="hint" role="note" style={{ flexShrink: 0, margin: "0 0 6px" }}>{data.scope_note}</p>}
+      <div style={{ flex: 1, minHeight: 0 }}><Chart option={option} printable={printable} /></div>
+    </div>
+  );
 }
 
 export function BreakdownWidget({ widget, filters }: Props) {
@@ -290,5 +268,112 @@ export function WidgetContent(props: Props) {
       return <BreakdownWidget {...props} />;
     case "projects":
       return <ProjectsWidget {...props} />;
+    case "profit":
+      return <ProfitWidget {...props} />;
+    case "failures":
+      return <FailuresWidget {...props} />;
   }
+}
+
+const signedMoney = (v: number) => (v < 0 ? `−${money(-v)}` : money(v));
+
+export function ProfitWidget({ widget, filters }: Props) {
+  const limit = widget.config.limit ?? 8;
+  const q = useQuery({
+    queryKey: widgetQueryKey(widget, filters),
+    queryFn: () => api<ProfitResponse>("/analytics/profit", { query: { ...filterQuery(filters), limit } }),
+  });
+  if (!q.data) return <State loading={q.isLoading} error={q.error} />;
+  return <ProfitView data={q.data} />;
+}
+
+/** Прибыль = выручка − затраты по месячным строкам; налоги и НДС не вычитаются. */
+export function ProfitView({ data, printable = false }: { data: ProfitResponse; printable?: boolean }) {
+  const rows = [...data.groups, data.total];
+  return (
+    <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
+      <p className="hint" style={{ margin: "0 0 8px" }}>Выручка минус затраты по месячным строкам, без налогов и НДС.</p>
+      <table className="table">
+        <thead><tr><th>Проекты</th><th className="num">Кол-во</th><th className="num">Выручка</th><th className="num">Затраты</th><th className="num">Прибыль</th><th className="num">Маржа</th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key} style={r.key === "all" ? { fontWeight: 600 } : undefined}>
+              <td>{r.label}</td>
+              <td className="num">{count(r.count)}</td>
+              <td className="num">{money(r.revenue)}</td>
+              <td className="num">{money(r.costs)}</td>
+              <td className={`num ${r.profit < 0 ? "negative" : ""}`}>{signedMoney(r.profit)}</td>
+              <td className="num">{r.margin_pct === null ? "—" : `${r.margin_pct}%`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {data.items.length > 0 && (
+        <table className="table" style={{ marginTop: 8 }}>
+          <thead><tr><th>Проект</th><th>Этап</th><th className="num">Прибыль</th></tr></thead>
+          <tbody>
+            {data.items.map((p) => (
+              <tr key={p.project_id}>
+                <td style={{ whiteSpace: "normal" }}>{printable ? p.name : <Link href={`/projects/${p.project_id}`}>{p.name}</Link>}<div className="muted">{p.client}</div></td>
+                <td style={{ whiteSpace: "normal" }}>{p.stage}</td>
+                <td className={`num ${p.profit < 0 ? "negative" : ""}`}>{signedMoney(p.profit)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+export function FailuresWidget({ widget, filters }: Props) {
+  const limit = widget.config.limit ?? 8;
+  const q = useQuery({
+    queryKey: widgetQueryKey(widget, filters),
+    queryFn: () => api<FailuresResponse>("/analytics/failures", { query: { ...filterQuery(filters), limit } }),
+  });
+  if (!q.data) return <State loading={q.isLoading} error={q.error} />;
+  return <FailuresView data={q.data} />;
+}
+
+/** Невыполненные проекты: причины, этапы остановки, сегменты и менеджеры. */
+export function FailuresView({ data, printable = false }: { data: FailuresResponse; printable?: boolean }) {
+  if (!data.total) return <div className="muted">Невыполненных проектов нет</div>;
+  const groups: [string, FailuresResponse["by_stage"]][] = [
+    ["Этап остановки", data.by_stage], ["Сегмент", data.by_segment], ["Менеджер", data.by_manager],
+  ];
+  return (
+    <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
+      <table className="table">
+        <thead><tr><th>Причина</th><th className="num">Проектов</th><th className="num">Сумма</th></tr></thead>
+        <tbody>
+          {data.by_reason.filter((r) => r.count > 0).map((r) => (
+            <tr key={r.key}><td>{r.label}</td><td className="num">{count(r.count)}</td><td className="num">{money(r.amount)}</td></tr>
+          ))}
+          <tr style={{ fontWeight: 600 }}><td>Всего</td><td className="num">{count(data.total)}</td><td /></tr>
+        </tbody>
+      </table>
+      <p className="hint" style={{ margin: "6px 0" }}>«Застрял на этапе»: {data.stall_rule}.</p>
+      <div className="failure-groups">
+        {groups.map(([title, rows]) => (
+          <div key={title}>
+            <strong>{title}</strong>
+            <ul>{rows.slice(0, 5).map((r) => <li key={r.label}>{r.label}: {count(r.count)}</li>)}</ul>
+          </div>
+        ))}
+      </div>
+      <table className="table">
+        <thead><tr><th>Проект</th><th>Причина</th><th className="num">Дней на этапе</th></tr></thead>
+        <tbody>
+          {data.items.map((p) => (
+            <tr key={p.project_id}>
+              <td style={{ whiteSpace: "normal" }}>{printable ? p.name : <Link href={`/projects/${p.project_id}`}>{p.name}</Link>}<div className="muted">{p.stage} · {p.manager}</div></td>
+              <td style={{ whiteSpace: "normal" }}>{p.reason_label}</td>
+              <td className="num">{p.days_on_stage ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
