@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import Numeric, case, cast, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import aliased
@@ -157,32 +157,6 @@ for key, expr, label, label_key in [
     ("financial.cost_type", type_ref.name, "Вид затрат", "financial_entries.cost_type_id"),
 ]:
     register(key, expr, "string", label, label_key, True)
-
-# Customer projections deliberately do not fall back to contract amount when
-# monthly revenue is absent. VAT bases remain independent in reports and XLSX.
-def weighted_money(amount):
-    # Work in whole cents before applying probability. Besides matching the
-    # Decimal path, this avoids binary half-cent ties on the SQLite test DB.
-    cents = func.round(amount * 100, 0)
-    return cast(func.round(cents * Project.probability / 100, 0) / 100, Numeric(24, 2))
-
-
-for basis, vat, label in [("with_vat", True, "с НДС"), ("without_vat", False, "без НДС")]:
-    finance_alias = aliased(Finance)
-    revenue_total = select(func.sum(finance_alias.amount)).where(
-        finance_alias.project_id == Project.id,
-        finance_alias.kind == "revenue", finance_alias.vat_included == vat,
-    ).correlate(Project).scalar_subquery()
-    register(
-        f"project.weighted_revenue_{basis}",
-        weighted_money(case((Project.stage_scheme == "customer", revenue_total * 1000))),
-        "decimal", f"Выручка с учётом вероятности, ₽ ({label})",
-    )
-register(
-    "project.weighted_revenue_legacy",
-    weighted_money(case((Project.stage_scheme == "legacy", Project.amount))),
-    "decimal", "Выручка с учётом вероятности, ₽ (НДС не указан, прежняя схема)",
-)
 
 
 def operators(kind):

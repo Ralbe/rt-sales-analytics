@@ -1,7 +1,5 @@
 "use client";
 
-import { projectInstant } from "@/lib/project-time";
-
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
@@ -69,7 +67,7 @@ const text = (value: string | number | null | undefined) => value === null || va
 const flag = (value: boolean) => value ? "Да" : "Нет";
 const timestamp = (value: string | number) => new Intl.DateTimeFormat("ru-RU", {
   year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
-}).format(typeof value === "string" ? projectInstant(value) : new Date(value));
+}).format(new Date(value));
 
 function date(value: string | null | undefined) {
   if (!value) return "Не указано";

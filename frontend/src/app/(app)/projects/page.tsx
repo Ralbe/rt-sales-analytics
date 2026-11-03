@@ -8,14 +8,12 @@ import { useEffect, useState } from "react";
 import { MultiSelect } from "@/components/MultiSelect";
 import { QueryState } from "@/components/QueryState";
 import { api, toQuery } from "@/lib/api";
-import { localDateKey, projectInstant } from "@/lib/project-time";
-import { revenueRubles } from "@/lib/revenue-format";
 import { date } from "@/lib/format";
 import { calendarPeriod, isPeriodDate, periodError, type PeriodPreset } from "@/lib/event-period";
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import { managerName, managerFilterOptions, segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
-import type { ProjectPage, RevenueProjection, Stage } from "@/lib/types";
+import type { ProjectPage, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 const COLUMN_FIELDS: Record<string, ProjectFieldKey> = {
@@ -24,22 +22,13 @@ const COLUMN_FIELDS: Record<string, ProjectFieldKey> = {
 const YEARS = Array.from({ length: 301 }, (_, i) => 1900 + i);
 const amountFormat = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fullAmount = (value: string) => `${amountFormat.format(Number(value))} ₽`;
-
-function RevenueCell({ projection, weighted = false }: { projection?: RevenueProjection; weighted?: boolean }) {
-  if (!projection) return <>—</>;
-  if (!projection.has_revenue) return <span className="muted">Выручка не задана</span>;
-  return <>{projection.buckets.map((bucket) => <div key={bucket.basis}>
-    {revenueRubles(weighted ? bucket.weighted_revenue_rub : bucket.revenue_rub)}
-    <div className="hint">{bucket.label}</div>
-  </div>)}</>;
-}
-const creationFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" });
+const creationFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" });
 
 function creationInPeriod(value: string, from: string, to: string): Date | null {
   if (!from || !to || from > to) return null;
-  const timestamp = projectInstant(value);
+  const timestamp = new Date(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`);
   if (Number.isNaN(timestamp.getTime())) return null;
-  const day = localDateKey(timestamp);
+  const day = timestamp.toISOString().slice(0, 10);
   return day >= from && day <= to ? timestamp : null;
 }
 
@@ -47,7 +36,7 @@ function CreationMarker({ value, from, to }: { value: string; from: string; to: 
   const created = creationInPeriod(value, from, to);
   return created ? (
     <div><time className="badge" dateTime={created.toISOString()} style={{ whiteSpace: "normal" }}>
-      Создан за период: {creationFormat.format(created)}
+      Создан за период: {creationFormat.format(created)} UTC
     </time></div>
   ) : null;
 }
@@ -64,8 +53,6 @@ const COLUMNS: { key: string; label: string; sort?: string; num?: boolean; width
   { key: "implementation_year", label: "Год реализации", sort: "implementation_year" },
   { key: "probability", label: "Вероятность, %", num: true },
   { key: "amount", label: "Сумма, ₽", sort: "amount", num: true, width: 210 },
-  { key: "revenue", label: "Выручка, ₽", num: true, width: 240 },
-  { key: "weighted_revenue", label: "Выручка с учётом вероятности, ₽", num: true, width: 240 },
   { key: "cost", label: "Себестоимость, ₽", num: true, width: 210 },
   { key: "margin", label: "Маржа, %", num: true },
   { key: "close", label: "План закрытия", sort: "expected_close_date" },
@@ -241,20 +228,23 @@ export default function ProjectsPage() {
 
       <div className="page-body">
         <fieldset style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
+          <legend>Отметить проекты, созданные за период (UTC)</legend>
           <div className="filters">
             <label>Период событий <select className="input" aria-label="Период событий" value={periodPreset} onChange={(event) => selectPeriod(event.target.value as PeriodPreset | "")}>
               <option value="">Не выбран</option><option value="week">Неделя</option><option value="month">Месяц</option><option value="quarter">Квартал</option><option value="custom">Произвольный период</option>
             </select></label>
-            <label>С <input className="input" type="date" aria-label="Начало периода создания" value={createdFrom} onChange={(event) => updatePeriod(event.target.value, createdTo, "custom")} /></label>
-            <label>По <input className="input" type="date" aria-label="Конец периода создания" value={createdTo} onChange={(event) => updatePeriod(createdFrom, event.target.value, "custom")} /></label>
+            <label>С <input className="input" type="date" aria-label="Начало периода создания (UTC)" value={createdFrom} onChange={(event) => updatePeriod(event.target.value, createdTo, "custom")} /></label>
+            <label>По <input className="input" type="date" aria-label="Конец периода создания (UTC)" value={createdTo} onChange={(event) => updatePeriod(createdFrom, event.target.value, "custom")} /></label>
             <button type="button" className="btn small" disabled={!createdFrom && !createdTo && !periodPreset && !urlPeriodError} onClick={() => updatePeriod("", "", "")}>Сбросить период</button>
           </div>
+          <p className="hint">Неделя начинается в понедельник. Даты включаются полностью по UTC.</p>
           {error && <p className="error" role="alert">{error}</p>}
         </fieldset>
         <label className="check">
-          <input type="checkbox" checked={openOnly} onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
+          <input type="checkbox" checked={openOnly} aria-describedby="open-projects-scope" onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
           Только открытые проекты прежних стадий
         </label>
+        <p className="hint" id="open-projects-scope">Фильтр открытых проектов применяется только к прежним шести стадиям. Проекты с новыми этапами не включаются.</p>
         <QueryState query={refsQuery} title="Не удалось загрузить справочники фильтров" loadingText="Загружаем справочники фильтров…" />
         <QueryState query={projectsQuery} title="Не удалось загрузить проекты" loadingText="Загружаем проекты…" />
         <div className="card" style={{ overflow: "auto", opacity: isFetching ? 0.7 : 1 }}>
@@ -272,7 +262,7 @@ export default function ProjectsPage() {
                     className={`${c.sort ? "sortable" : ""} ${c.num ? "num" : ""}`}
                     onClick={c.sort ? () => toggleSort(c.sort!) : undefined}
                   >
-                    {c.key === "revenue" || c.key === "weighted_revenue" ? c.label : heading(COLUMN_FIELDS[c.key] ?? c.key as ProjectFieldKey)}
+                    {heading(COLUMN_FIELDS[c.key] ?? c.key as ProjectFieldKey)}
                     {c.sort && sort.replace("-", "") === c.sort ? (sort.startsWith("-") ? " ↓" : " ↑") : ""}
                   </th>
                 ))}
@@ -299,8 +289,6 @@ export default function ProjectsPage() {
                   <td>{p.implementation_year ?? "—"}</td>
                   <td className="num">{p.probability}%</td>
                   <td className="num">{fullAmount(p.amount)}</td>
-                  <td className="num"><RevenueCell projection={p.revenue_projection} /></td>
-                  <td className="num"><RevenueCell projection={p.revenue_projection} weighted /></td>
                   <td className="num">{fullAmount(p.cost)}</td>
                   <td className="num">{p.margin_pct === null ? "—" : `${p.margin_pct}%`}</td>
                   <td>{date(p.expected_close_date)}</td>

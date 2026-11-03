@@ -16,13 +16,13 @@ export function periodError(from: string, to: string): string | null {
 }
 
 export function calendarPeriod(preset: Exclude<PeriodPreset, "custom">, now: Date): [string, string] {
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const day = now.getDate();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const day = now.getUTCDate();
   let start: Date;
   let end: Date;
   if (preset === "week") {
-    start = new Date(Date.UTC(year, month, day - (now.getDay() + 6) % 7));
+    start = new Date(Date.UTC(year, month, day - (now.getUTCDay() + 6) % 7));
     end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + 6));
   } else if (preset === "month") {
     start = new Date(Date.UTC(year, month, 1));

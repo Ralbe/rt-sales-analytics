@@ -1,7 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
 
-test.use({ timezoneId: "Europe/Moscow" });
-
 import type { Project, ProjectPage, Refs } from "../../src/lib/types";
 
 const manager = { id: 1, full_name: "Тестовый менеджер" };
@@ -27,7 +25,7 @@ function project(overrides: Partial<Project> = {}): Project {
     industry_manager: null, industry_project_number: null,
     project_status: "Статус\n" + "С".repeat(93), realized_work: "Сделано\n" + "Д".repeat(1000),
     period_plan: "Планы\n" + "Я".repeat(1000),
-    created_at: "2026-09-30T21:00:00Z", updated_at: "2026-10-26T00:00:00Z",
+    created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-26T00:00:00Z",
     financial_entries: [1, 2].map((month) => ({
       id: month, kind: "revenue", year: 2027, month, amount: "999.123", vat_included: true,
     })),
@@ -82,26 +80,10 @@ test("реестр: исходные поля, независимые этапы
     await expect(await cell(page, field)).toHaveText(expected);
   }
   await expect(page.getByRole("columnheader", { name: "Маржа, %", exact: true })).toBeVisible();
-  await expect(page.getByRole("columnheader", { name: "Выручка с учётом вероятности, ₽", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("columnheader", { name: /взвешенн/i })).toHaveCount(0);
   await expect(page.locator("tbody")).not.toContainText(/тыс\.|млн|млрд|999[,.]123|1998[,.]246/);
   await (await cell(page, "name")).click();
   await expect(page).toHaveURL(/\/projects\/42$/);
-});
-
-test("реестр: взвешенная выручка из API с раздельным НДС и точными копейками", async ({ page }) => {
-  await mockApi(page, [project({ revenue_projection: {
-    source: "monthly_revenue", has_revenue: true, buckets: [
-      { basis: "with_vat", label: "С НДС", revenue_rub: "999999999999999.99", weighted_revenue_rub: "369999999999999.99" },
-      { basis: "without_vat", label: "Без НДС", revenue_rub: "2000.00", weighted_revenue_rub: "740.00" },
-    ],
-  } })]);
-  await page.goto("/projects");
-  await expect(page.locator("tbody tr")).toHaveCount(1);
-  const weighted = await cell(page, "weighted_revenue");
-  await expect(weighted).toContainText("369 999 999 999 999,99 ₽");
-  await expect(weighted).toContainText("740,00 ₽");
-  await expect(weighted).toContainText("С НДС");
-  await expect(weighted).toContainText("Без НДС");
 });
 
 test("реестр: старый DTO без ИНН, пустые поля и нулевые суммы", async ({ page }) => {
@@ -211,6 +193,7 @@ test("реестр показывает оба поколения; nullable lega
   await expect(await cell(page, "probability", 0)).toHaveText("37%");
   expect(requests.at(-1)?.has("open_only")).toBe(false);
   const openOnly = page.getByLabel("Только открытые проекты прежних стадий", { exact: true });
+  await expect(openOnly).toHaveAccessibleDescription("Фильтр открытых проектов применяется только к прежним шести стадиям. Проекты с новыми этапами не включаются.");
   await openOnly.check();
   await expect.poll(() => requests.at(-1)?.get("open_only")).toBe("true");
   await expect(page.locator("tbody tr")).toHaveCount(1);
@@ -239,23 +222,23 @@ test("F4: корневой маршрут открывает полный рее
   expect(requests.at(-1)?.has("stage")).toBe(false);
 });
 
-test("реестр отмечает проекты, созданные в выбранном местном периоде", async ({ page }) => {
+test("реестр отмечает проекты, созданные в выбранном периоде UTC", async ({ page }) => {
   const items = [
-    project({ id: 1, name: "Начало периода", created_at: "2026-09-30T21:00:00Z" }),
-    project({ id: 2, name: "Конец периода", created_at: "2026-10-31T23:59:59+03:00" }),
-    project({ id: 3, name: "Старый изменённый проект", created_at: "2026-09-30T20:59:59Z", updated_at: "2026-10-15T12:00:00Z" }),
-    project({ id: 4, name: "После периода", created_at: "2026-10-31T21:00:00Z" }),
+    project({ id: 1, name: "Начало периода", created_at: "2026-10-01T00:00:00Z" }),
+    project({ id: 2, name: "Конец периода", created_at: "2026-11-01T02:59:59+03:00" }),
+    project({ id: 3, name: "Старый изменённый проект", created_at: "2026-09-30T23:59:59Z", updated_at: "2026-10-15T12:00:00Z" }),
+    project({ id: 4, name: "После периода", created_at: "2026-11-01T00:00:00Z" }),
   ];
   await mockApi(page, items);
   await page.goto("/projects");
   const row = (name: string) => page.getByRole("row").filter({ hasText: name });
-  const start = page.getByLabel("Начало периода создания");
-  const end = page.getByLabel("Конец периода создания");
+  const start = page.getByLabel("Начало периода создания (UTC)");
+  const end = page.getByLabel("Конец периода создания (UTC)");
   await expect(page.getByText(/Создан за период:/)).toHaveCount(0);
   await start.fill("2026-10-01");
   await end.fill("2026-10-31");
-  await expect(row("Начало периода")).toContainText(/Создан за период:.*01\.10\.2026.*00:00/);
-  await expect(row("Конец периода")).toContainText(/Создан за период:.*31\.10\.2026.*23:59/);
+  await expect(row("Начало периода")).toContainText(/Создан за период:.*01\.10\.2026.*00:00.*UTC/);
+  await expect(row("Конец периода")).toContainText(/Создан за период:.*31\.10\.2026.*23:59.*UTC/);
   await expect(row("Старый изменённый проект")).not.toContainText("Создан за период:");
   await expect(row("После периода")).not.toContainText("Создан за период:");
   await expect(page.getByText(/Создан за период:/)).toHaveCount(2);
@@ -268,12 +251,12 @@ test("реестр отмечает проекты, созданные в выб
   await expect(page.getByText(/Создан за период:/)).toHaveCount(0);
 });
 
-test("период событий: местные календарные границы сохраняются в адресе и сбрасываются", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-12-31T22:30:00Z") });
+test("период событий: календарные границы UTC сохраняются в адресе и сбрасываются", async ({ page }) => {
+  await page.clock.install({ time: new Date("2027-01-01T12:00:00Z") });
   const requests = await mockApi(page, [project()], 41);
   await page.goto("/projects");
-  const from = page.getByLabel("Начало периода создания");
-  const to = page.getByLabel("Конец периода создания");
+  const from = page.getByLabel("Начало периода создания (UTC)");
+  const to = page.getByLabel("Конец периода создания (UTC)");
   const preset = page.getByLabel("Период событий");
   await preset.selectOption("week");
   await expect(from).toHaveValue("2026-12-28");
@@ -308,24 +291,24 @@ test("период событий: високосный февраль и пос
   await page.clock.install({ time: new Date("2028-02-29T12:00:00Z") });
   await mockApi(page);
   await page.goto("/projects");
-  const from = page.getByLabel("Начало периода создания");
-  const to = page.getByLabel("Конец периода создания");
+  const from = page.getByLabel("Начало периода создания (UTC)");
+  const to = page.getByLabel("Конец периода создания (UTC)");
   const preset = page.getByLabel("Период событий");
   await preset.selectOption("month");
   await expect(from).toHaveValue("2028-02-01");
   await expect(to).toHaveValue("2028-02-29");
   await page.clock.setFixedTime(new Date("2028-12-31T23:00:00Z"));
   await preset.selectOption("quarter");
-  await expect(from).toHaveValue("2029-01-01");
-  await expect(to).toHaveValue("2029-03-31");
+  await expect(from).toHaveValue("2028-10-01");
+  await expect(to).toHaveValue("2028-12-31");
 });
 
 test("период событий: старая ссылка сохраняет даты без неверного пресета", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-12-31T22:30:00Z") });
+  await page.clock.install({ time: new Date("2027-01-01T12:00:00Z") });
   await mockApi(page);
   await page.goto("/projects?date_from=2026-01-01&date_to=2026-01-31&period_preset=week");
-  await expect(page.getByLabel("Начало периода создания")).toHaveValue("2026-01-01");
-  await expect(page.getByLabel("Конец периода создания")).toHaveValue("2026-01-31");
+  await expect(page.getByLabel("Начало периода создания (UTC)")).toHaveValue("2026-01-01");
+  await expect(page.getByLabel("Конец периода создания (UTC)")).toHaveValue("2026-01-31");
   await expect(page.getByLabel("Период событий")).toHaveValue("custom");
   await expect(page).toHaveURL(/period_preset=custom/);
 });
