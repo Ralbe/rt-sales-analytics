@@ -6,7 +6,7 @@
 
 @media print {
   html:has(.project-print-surface), body:has(.project-print-surface) { height: auto !important; overflow: visible !important; background: white; }
-  body:has(.project-print-surface) > :not(.project-print-surface) { display: none !important; }
+  body:has(.project-print-surface):not(:has(.gantt-print-surface)) > :not(.project-print-surface) { display: none !important; }
   .project-print-surface {
     display: block; page: project-card; width: 100%; margin: 0; color: #111; background: white;
     font: 10pt/1.45 Arial, "Segoe UI", sans-serif; overflow: visible; overflow-wrap: anywhere;

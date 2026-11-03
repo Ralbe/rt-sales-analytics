@@ -258,7 +258,12 @@ test("ошибка справочников запрещает отчёт без
 
 test("неподготовленные шрифты запрещают неполный PDF, после ошибки можно повторить", async ({ page }) => {
   await page.addInitScript(() => {
-    Object.defineProperty(document.fonts, "status", { configurable: true, get: () => "loading" });
+    const state = window as typeof window & { printFontCheckStarted: boolean };
+    state.printFontCheckStarted = false;
+    Object.defineProperty(document.fonts, "status", { configurable: true, get: () => {
+      if (document.querySelector("[data-dashboard-print] .print-widget")) state.printFontCheckStarted = true;
+      return "loading";
+    } });
   });
   await openDashboard(page, { widgets: [widgets[1]] });
   const button = page.getByRole("button", { name: "PDF / Печать" });
@@ -267,6 +272,10 @@ test("неподготовленные шрифты запрещают непо�
   await expect(page.locator("#dashboard-print-hint")).toHaveText("Готовим печатный снимок…");
   await expect(button).toBeDisabled();
   expect(await page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(0);
+  // The preparing label can render before the effect captures its deadline.
+  // Advance wall time only after the first readiness check has actually run.
+  await expect.poll(() => page.evaluate(() =>
+    (window as typeof window & { printFontCheckStarted: boolean }).printFontCheckStarted)).toBe(true);
   await page.evaluate(() => {
     const now = Date.now;
     Date.now = () => now() + 16_000;
