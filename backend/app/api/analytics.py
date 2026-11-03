@@ -9,9 +9,11 @@ from app.core import cache
 from app.db import get_db
 from app.deps import get_current_user, manager_scope
 from app.models import User
+from app.revenue_schemas import WeightedRevenueOut
 from app.schemas import BreakdownOut, GroupBy, KpiKey, KpiOut, TrendMetric, TrendOut
 from app.services import analytics
 from app.services.analytics import Filters
+from app.services.weighted_revenue import summary as revenue_summary
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -28,6 +30,12 @@ def get_filters(
         manager_ids=tuple(sorted(manager_id)),
         scope_manager_id=manager_scope(user),
     )
+
+
+@router.get("/weighted-revenue", response_model=WeightedRevenueOut)
+def weighted_revenue(f: Filters = Depends(get_filters), db: Session = Depends(get_db)) -> dict:
+    # Independent of the legacy-only analytics cache/scope.
+    return revenue_summary(db, f)
 
 
 def cached(name: str, f: Filters, compute: Callable[[], Any], **params: Any) -> Any:

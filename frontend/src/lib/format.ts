@@ -1,3 +1,5 @@
+import { projectInstant } from "./project-time";
+
 const rub = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
 const oneDigit = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
 const twoDigits = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -22,6 +24,7 @@ export function count(value: number): string {
 
 export function date(value: string | null | undefined): string {
   if (!value) return "—";
+  if (value.includes("T")) return projectInstant(value).toLocaleDateString("ru-RU");
   const [y, m, d] = value.slice(0, 10).split("-");
   return `${d}.${m}.${y}`;
 }
