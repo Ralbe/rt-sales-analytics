@@ -2,7 +2,6 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { localTimestamp } from "@/lib/project-time";
 import { api } from "@/lib/api";
 import { projectHistoryKey, type ProjectHistoryPage } from "@/lib/history-types";
 
@@ -36,7 +35,7 @@ export function ProjectHistory({ projectId }: { projectId: number }) {
                   <h3 style={{ margin: 0, fontSize: 15 }}>{item.title}</h3>
                   <span>{item.author_name}</span>
                   <time dateTime={item.created_at} className="muted">
-                    {localTimestamp(item.created_at)}
+                    {new Date(item.created_at).toLocaleString("ru-RU")}
                   </time>
                 </div>
                 {item.note && <p className="muted">{item.note}</p>}

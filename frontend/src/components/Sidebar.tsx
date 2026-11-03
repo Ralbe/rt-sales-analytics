@@ -75,9 +75,6 @@ export function Sidebar({ user }: { user: User }) {
       </>}
 
       <div className="section">Проекты</div>
-      <Link href="/analytics" className={active("/analytics")}>
-        Выручка и сроки этапов
-      </Link>
       <Link href="/projects" className={active("/projects")}>
         Список проектов
       </Link>

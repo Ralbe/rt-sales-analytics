@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.core.security import inn_is_valid
 from app.models import Role, Stage
-from app.revenue_schemas import RevenueProjection
 
 LEGACY_STAGE_SCOPE_NOTE = (
     "Показатели рассчитаны только по проектам с прежними шестью стадиями. "
@@ -210,7 +209,6 @@ class ProjectOut(ORM):
     margin: Decimal
     margin_pct: float | None
     probability: int
-    revenue_projection: RevenueProjection
     start_date: date
     expected_close_date: date
     closed_at: date | None

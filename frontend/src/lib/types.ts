@@ -66,7 +66,6 @@ export interface Project {
   margin_pct: number | null;
   probability: number;
   start_date: string;
-  revenue_projection?: RevenueProjection;
   expected_close_date: string;
   closed_at: string | null;
   payment_type: RefItem | null;
@@ -103,27 +102,6 @@ export interface FinancialEntry {
   status?: RefItem;
   article?: RefItem | null;
   cost_type?: RefItem | null;
-}
-
-export interface RevenueBucket {
-  basis: "with_vat" | "without_vat" | "unspecified";
-  label: string;
-  revenue_rub: string;
-  weighted_revenue_rub: string;
-}
-
-export interface RevenueProjection {
-  source: "monthly_revenue" | "legacy_amount";
-  has_revenue: boolean;
-  buckets: RevenueBucket[];
-}
-
-export interface WeightedRevenueResponse {
-  stage_scope: "all";
-  project_count: number;
-  missing_revenue_count: number;
-  buckets: RevenueBucket[];
-  scope_note: string;
 }
 
 export interface ProjectPage {
