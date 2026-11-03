@@ -10,6 +10,7 @@ from app.api import (
     clients,
     dashboards,
     project_field_labels,
+    project_timeline,
     projects,
     reference_admin,
     refs,
@@ -62,7 +63,7 @@ async def report_snapshot_cache_control(request, call_next):
 
 for module in (
     auth, refs, clients, projects, analytics, dashboards, users, project_field_labels,
-    reference_admin, structural_references, reports,
+    reference_admin, structural_references, reports, project_timeline,
 ):
     app.include_router(module.router, prefix="/api")
 

@@ -48,6 +48,7 @@ from app.services.project_field_labels import (
     with_snapshot_field_labels,
 )
 from app.services.project_history import financial_snapshot, history_items, project_snapshot, same_finances
+from app.services.weighted_revenue import project_projection
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -93,6 +94,7 @@ def to_out(p: Project) -> dict:
         "margin": margin,
         "margin_pct": round(float(margin / p.amount * 100), 1) if p.amount else None,
         "probability": p.probability,
+        "revenue_projection": project_projection(p),
         "start_date": p.start_date,
         "expected_close_date": p.expected_close_date,
         "closed_at": p.closed_at,
