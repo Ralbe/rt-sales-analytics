@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { ClientItem, Project, Refs, Stage } from "../../src/lib/types";
@@ -39,6 +40,7 @@ type ProjectWrite = Record<string, unknown> & {
 async function mockApi(page: Page, initial: Project | null = LEGACY) {
   const state = { current: initial && structuredClone(initial), writes: [] as ProjectWrite[], unexpected: [] as string[] };
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/api/, "");
     const method = request.method();

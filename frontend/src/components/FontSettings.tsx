@@ -5,11 +5,8 @@ import { useEffect, useState } from "react";
 const STORAGE_KEY = "rt-font-settings";
 
 export const FONT_FAMILIES = [
-  { id: "inter", name: "Inter (по умолчанию)", css: "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif" },
-  { id: "pt-sans", name: "PT Sans", css: "\"PT Sans\", \"PT Sans Caption\", Arial, sans-serif" },
-  { id: "arial", name: "Arial", css: "Arial, \"Liberation Sans\", Helvetica, sans-serif" },
-  { id: "verdana", name: "Verdana", css: "Verdana, \"DejaVu Sans\", sans-serif" },
-  { id: "times", name: "Times New Roman", css: "\"Times New Roman\", \"Liberation Serif\", Times, serif" },
+  { id: "brand", name: "Фирменный", css: "\"Rostelecom Basis\", Arial, \"Liberation Sans\", sans-serif" },
+  { id: "arial", name: "Arial", css: "Arial, \"Liberation Sans\", sans-serif" },
 ] as const;
 
 export const FONT_SCALES = [
@@ -20,7 +17,7 @@ export const FONT_SCALES = [
 ] as const;
 
 type Settings = { family: string; scale: string };
-const DEFAULTS: Settings = { family: "inter", scale: "100" };
+const DEFAULTS: Settings = { family: "brand", scale: "100" };
 
 function read(): Settings {
   try {
@@ -37,6 +34,7 @@ function apply(settings: Settings) {
   const root = document.documentElement;
   root.style.setProperty("--font", family.css);
   // zoom меняет все размеры интерфейса пропорционально, включая жёстко заданные в пикселях.
+  root.style.setProperty("--ui-scale", String(scale.zoom));
   root.style.setProperty("zoom", scale.zoom === 1 ? "" : String(scale.zoom));
 }
 

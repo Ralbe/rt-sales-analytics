@@ -479,7 +479,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
               />
               <div id="segment-project-hint" className="hint">
                 {isNew && !persistedId
-                  ? "По умолчанию проект наследует сегмент выбранного клиента. Можно выбрать другой активный сегмент."
+                  ? "По умолчанию — сегмент клиента."
                   : "Сегмент проекта не меняется при смене клиента."}
               </div>
               <div id="segment-project-error" className="error" role={err("segment_id") ? "alert" : undefined}>{err("segment_id")}</div>
@@ -686,7 +686,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                   {...register("probability")}
                 />
                 <div className={customerScheme ? "hint" : "error"}>
-                  {customerScheme ? "Определяется сервером по выбранному этапу проекта" : err("probability")}
+                  {customerScheme ? "По выбранному этапу проекта." : err("probability")}
                 </div>
               </div>
             </div>
@@ -769,33 +769,33 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
 
       <fieldset className="fieldset" disabled={readOnly || isSubmitting}>
         <legend>{label("financial_entries")}</legend>
-        <p className="hint">Сумма вводится в тыс. ₽. Выберите, включает ли сумма НДС; налог автоматически не пересчитывается.</p>
+        <p className="hint">Суммы в тыс. ₽, без пересчёта НДС.</p>
         {financialEntries.map((entry, index) => {
           const set = (patch: Partial<FinancialEntry>) => setFinancialEntries((items) => items.map((item, i) => i === index ? { ...item, ...patch } : item));
-          return <div className="row2" key={entry.id ?? `entry-${index}`} style={{ marginBottom: 10 }}>
-            <select className="select" value={entry.kind} onChange={(e) => set({ kind: e.target.value as FinancialEntry["kind"], status_id: undefined, article_id: undefined, cost_type_id: undefined })}>
+          return <div className="financial-entry" key={entry.id ?? `entry-${index}`}>
+            <label className="field">Тип строки<select className="select" value={entry.kind} onChange={(e) => set({ kind: e.target.value as FinancialEntry["kind"], status_id: undefined, article_id: undefined, cost_type_id: undefined })}>
               <option value="revenue">{label("financial_entries.revenue")}</option><option value="cost">{label("financial_entries.cost")}</option>
-            </select>
-            <input className="input" type="number" min="1900" max="2200" value={entry.year} aria-label={label("financial_entries.year")} onChange={(e) => set({ year: Number(e.target.value) })} />
-            <select className="select" value={entry.month} aria-label={label("financial_entries.month")} onChange={(e) => set({ month: Number(e.target.value) })}>
+            </select></label>
+            <label className="field">{label("financial_entries.year")}<input className="input" type="number" min="1900" max="2200" value={entry.year} aria-label={label("financial_entries.year")} onChange={(e) => set({ year: Number(e.target.value) })} /></label>
+            <label className="field">{label("financial_entries.month")}<select className="select" value={entry.month} aria-label={label("financial_entries.month")} onChange={(e) => set({ month: Number(e.target.value) })}>
               {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Intl.DateTimeFormat("ru", { month: "long" }).format(new Date(2020, i, 1))}</option>)}
-            </select>
-            <input className="input" type="number" min="0" step="0.001" value={entry.amount} placeholder="тыс. ₽" aria-label={heading("financial_entries.amount")} onChange={(e) => set({ amount: e.target.value })} />
-            <select className="select" value={entry.vat_included ? "yes" : "no"} aria-label={label("financial_entries.vat_included")} onChange={(e) => set({ vat_included: e.target.value === "yes" })}>
+            </select></label>
+            <label className="field">{heading("financial_entries.amount")}<input className="input" type="number" min="0" step="0.001" value={entry.amount} aria-label={heading("financial_entries.amount")} onChange={(e) => set({ amount: e.target.value })} /></label>
+            <label className="field">{label("financial_entries.vat_included")}<select className="select" value={entry.vat_included ? "yes" : "no"} aria-label={label("financial_entries.vat_included")} onChange={(e) => set({ vat_included: e.target.value === "yes" })}>
               <option value="yes">С НДС</option><option value="no">Без НДС</option>
-            </select>
-            {entry.kind === "revenue" ? <select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.revenue_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
+            </select></label>
+            {entry.kind === "revenue" ? <label className="field">{label("financial_entries.revenue_status")}<select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.revenue_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
               <option value="">{label("financial_entries.revenue_status")}</option>{entry.status && entry.status_id === entry.status.id && !refs?.revenue_statuses.some((x) => x.id === entry.status?.id) && <option value={entry.status.id} disabled>{entry.status.name} (неактивно)</option>}{refs?.revenue_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </select> : <>
-              <select className="select" value={entry.article_id ?? ""} aria-label={label("financial_entries.article_id")} onChange={(e) => set({ article_id: Number(e.target.value) })}>
+            </select></label> : <>
+              <label className="field">{label("financial_entries.article_id")}<select className="select" value={entry.article_id ?? ""} aria-label={label("financial_entries.article_id")} onChange={(e) => set({ article_id: Number(e.target.value) })}>
                 <option value="">{label("financial_entries.article_id")}</option>{entry.article && entry.article_id === entry.article.id && !refs?.cost_articles.some((x) => x.id === entry.article?.id) && <option value={entry.article.id} disabled>{entry.article.name} (неактивно)</option>}{refs?.cost_articles.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-              </select>
-              <select className="select" value={entry.cost_type_id ?? ""} aria-label={label("financial_entries.cost_type_id")} onChange={(e) => set({ cost_type_id: Number(e.target.value) })}>
+              </select></label>
+              <label className="field">{label("financial_entries.cost_type_id")}<select className="select" value={entry.cost_type_id ?? ""} aria-label={label("financial_entries.cost_type_id")} onChange={(e) => set({ cost_type_id: Number(e.target.value) })}>
                 <option value="">{label("financial_entries.cost_type_id")}</option>{entry.cost_type && entry.cost_type_id === entry.cost_type.id && !refs?.cost_types.some((x) => x.id === entry.cost_type?.id) && <option value={entry.cost_type.id} disabled>{entry.cost_type.name} (неактивно)</option>}{refs?.cost_types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-              </select>
-              <select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.cost_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
+              </select></label>
+              <label className="field">{label("financial_entries.cost_status")}<select className="select" value={entry.status_id ?? ""} aria-label={label("financial_entries.cost_status")} onChange={(e) => set({ status_id: Number(e.target.value) })}>
                 <option value="">{label("financial_entries.cost_status")}</option>{entry.status && entry.status_id === entry.status.id && !refs?.cost_statuses.some((x) => x.id === entry.status?.id) && <option value={entry.status.id} disabled>{entry.status.name} (неактивно)</option>}{refs?.cost_statuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-              </select>
+              </select></label>
             </>}
             <button type="button" className="btn" onClick={() => setFinancialEntries((items) => items.filter((_, i) => i !== index))}>Удалить</button>
           </div>;

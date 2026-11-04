@@ -6,7 +6,7 @@ import { useState } from "react";
 
 const ReactECharts = dynamic(() => import("./ChartRenderer"), { ssr: false });
 
-export const PALETTE = ["#7700FF", "#FF4F12", "#2b9bd8", "#1a8f5a", "#d6457a", "#c9a227", "#4a6fe3", "#8a8f9f"];
+export const PALETTE = ["#7700FF", "#FF4F12", "#B478FF", "#D9BEFF"];
 
 export function Chart({ option, printable = false }: { option: EChartsOption; printable?: boolean }) {
   const [ready, setReady] = useState(false);
@@ -16,7 +16,7 @@ export function Chart({ option, printable = false }: { option: EChartsOption; pr
         theme="v5"
         option={{
           color: PALETTE,
-          textStyle: { fontFamily: (typeof document !== "undefined" && getComputedStyle(document.documentElement).getPropertyValue("--font").trim()) || "Inter, system-ui, sans-serif" },
+          textStyle: { fontFamily: (typeof document !== "undefined" && getComputedStyle(document.documentElement).getPropertyValue("--font").trim()) || "Arial, sans-serif" },
           animationDuration: 300,
           ...option,
           ...(printable ? { animation: false } : {}),

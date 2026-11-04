@@ -71,7 +71,7 @@ def test_period_changes_flags_new_stage_up_and_revenue(as_analyst, db):
         "date_from": (today - timedelta(days=6)).isoformat(), "date_to": today.isoformat(),
     }).json()
     item = next(i for i in week["items"] if i["project_id"] == project["id"])
-    assert item["indicators"] == ["stage_up", "revenue_up"]
+    assert item["indicators"] == ["stage_up"]  # Сумма контракта не является выручкой.
 
     quarter = as_analyst.get("/api/analytics/changes", params={
         "date_from": (today - timedelta(days=90)).isoformat(), "date_to": today.isoformat(),
@@ -127,6 +127,9 @@ def test_gantt_shows_stage_segments_and_finance_months(as_analyst, db):
     assert as_analyst.put(f"/api/projects/{project['id']}", json=payload).status_code == 200
     body = as_analyst.get(f"/api/projects/{project['id']}/gantt").json()
     assert [s["label"] for s in body["stages"]] == [lead.name, proposal.name]
-    assert (date.fromisoformat(body["stages"][0]["end"]) - date.fromisoformat(body["stages"][0]["start"])).days == 20
-    assert body["revenue"] == [{"year": 2026, "month": 3, "amount": 15.0}]
+    segment = body["stages"][0]
+    assert (datetime.fromisoformat(segment["end"]) - datetime.fromisoformat(segment["start"])).days == 20
+    assert {(r["year"], r["month"], r["amount"], r["vat_included"]) for r in body["revenue"]} == {
+        (2026, 3, 10.0, True), (2026, 3, 5.0, False),
+    }
     assert body["costs"] == []

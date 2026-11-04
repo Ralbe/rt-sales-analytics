@@ -53,6 +53,7 @@ class Filters:
     manager_ids: tuple[int, ...] = ()
     # Ограничение по правам: пользователь видит только свои проекты.
     scope_manager_id: int | None = None
+    can_view_archive: bool = False
 
 
 def load_frame(db: Session, f: Filters) -> pd.DataFrame:
@@ -251,3 +252,19 @@ def breakdown(db: Session, f: Filters, as_of: date, group_by: str, metric: str) 
         if v
     ]
     return {"metric": metric, "group_by": group_by, "items": items, **STAGE_SCOPE}
+
+
+def monthly_trend(db: Session, f: Filters, year: int, months: list[int], metric: str, as_of: date) -> dict:
+    """Остаток проектов на конец месяца; текущий месяц — на дату расчёта."""
+    from calendar import monthrange
+
+    df = load_frame(db, f)
+    history = []
+    for month in sorted(set(months)):
+        start = date(year, month, 1)
+        if start > as_of:
+            continue
+        end = min(date(year, month, monthrange(year, month)[1]), as_of)
+        value = float(_metric_values(df, end, metric).sum())
+        history.append({"date": start, "value": round(value, 2)})
+    return {"metric": metric, "history": history, "forecast": [], "method": "month_end", **STAGE_SCOPE}

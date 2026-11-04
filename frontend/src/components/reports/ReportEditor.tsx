@@ -75,11 +75,10 @@ function EditorForm({ fields, report, visible }: { fields: ReportField[]; report
       <div className="card report-section">
         <label className="field">Название отчёта<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
         <label className="field">Строки отчёта<select className="select" value={definition.grain} onChange={(e) => changeGrain(e.target.value as Grain)}><option value="project">Проекты</option><option value="financial_entry">Финансовые записи</option></select></label>
-        <p className="muted">Одна строка — проект или существующая финансовая запись. Суммы и НДС отображаются без дополнительных расчётов.</p>
+        <p className="muted">НДС не пересчитывается. Прибыль = выручка − затраты по финансовым строкам.</p>
         {notice && <p role="status">{notice}</p>}
       </div>
       <section className="card report-section"><h2>Колонки и порядок</h2>
-        <p className="muted">Выберите поля и установите порядок кнопками.</p>
         <div className="report-field-list">{available.map((f) => <label key={f.id}><input type="checkbox" checked={definition.columns.includes(f.id)} onChange={(e) => patch({ columns: e.target.checked ? [...definition.columns, f.id] : definition.columns.filter((id) => id !== f.id) })} /> {f.label}</label>)}</div>
         {!available.length && <p>Для выбранного режима нет доступных полей.</p>}
         <ol className="report-order">{definition.columns.map((id, i) => <li key={id}><span>{label(id)}</span><button className="btn small" type="button" disabled={i === 0} aria-label={`Переместить ${label(id)} выше`} onClick={() => move(i, -1)}>↑</button><button className="btn small" type="button" disabled={i === definition.columns.length - 1} aria-label={`Переместить ${label(id)} ниже`} onClick={() => move(i, 1)}>↓</button></li>)}</ol>

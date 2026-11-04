@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import STAGE_LABELS, AuditLog, Client, Project, ReferenceValue
+from app.services.stage_intervals import cutoff, duration_statistics, visits
 
 SUCCESS_STAGE_CODE = "success"
 INDICATORS = {
@@ -35,6 +36,11 @@ class PipelineFilters:
     customer_stage_ids: tuple[int, ...] = ()
     implementation_year: int | None = None
     scope_manager_id: int | None = None
+    can_view_archive: bool = False
+    archived: bool = False
+    q: str = ""
+    open_only: bool = False
+    stages: tuple[str, ...] = ()
 
 
 def _day(value: datetime) -> date:
@@ -58,8 +64,17 @@ def load_projects(db: Session, f: PipelineFilters, *, include_archived: bool = F
         .join(Client, Client.id == Project.client_id)
         .where(Project.stage_scheme == "customer")
     )
-    if not include_archived:
-        q = q.where(Project.archived_at.is_(None))
+    if not include_archived or not f.can_view_archive:
+        archive_filter = (Project.archived_at.is_not(None) if f.archived and f.can_view_archive
+                          else Project.archived_at.is_(None))
+        q = q.where(archive_filter)
+    if f.q.strip():
+        text = f.q.strip()
+        q = q.where(or_(Project.name.ilike(f"%{text}%"), Client.name.ilike(f"%{text}%"), Client.inn.startswith(text)))
+    if f.open_only:
+        q = q.where(Project.customer_stage.has(ReferenceValue.code != SUCCESS_STAGE_CODE))
+    if f.stages:
+        q = q.where(Project.stage.in_(f.stages))
     if f.scope_manager_id is not None:
         q = q.where(Project.manager_id == f.scope_manager_id)
     if f.segment_ids:
@@ -107,15 +122,8 @@ def stage_timeline(project: Project, events: list[AuditLog]) -> list[tuple[datet
     return timeline
 
 
-def stage_durations(project: Project, events: list[AuditLog], today: date) -> list[tuple[int, int]]:
-    """Сколько дней проект провёл на каждом этапе: [(id этапа, дни), ...]."""
-    timeline = stage_timeline(project, events)
-    end = _day(project.archived_at) if project.archived_at is not None else today
-    result = []
-    for i, (started, stage_id) in enumerate(timeline):
-        finished = _day(timeline[i + 1][0]) if i + 1 < len(timeline) else end
-        result.append((stage_id, max((finished - _day(started)).days, 0)))
-    return result
+def stage_durations(project: Project, events: list[AuditLog], today: date) -> list[tuple[int, float]]:
+    return [(v.stage, v.days) for v in visits(project, events, cutoff(today)) if isinstance(v.stage, int)]
 
 
 def _revenue_total(rows) -> Decimal:
@@ -139,9 +147,9 @@ def _group(items: dict, key, label: str, project: Project) -> None:
 
 def _rounded(items: list[dict]) -> list[dict]:
     for item in items:
-        for field in ("amount", "weighted_amount", "avg_days"):
+        for field in ("amount", "weighted_amount"):
             if item.get(field) is not None:
-                item[field] = round(item[field], 2 if field != "avg_days" else 1)
+                item[field] = round(item[field], 2)
     return items
 
 
@@ -154,7 +162,7 @@ def summary(db: Session, f: PipelineFilters, today: date) -> dict:
 
     by_stage = {
         s.id: {"key": str(s.id), "label": s.name, "probability": s.probability, "count": 0, "amount": 0.0,
-               "weighted_amount": 0.0, "avg_days": None}
+               "weighted_amount": 0.0, **duration_statistics([])}
         for s in stages
     }
     durations: dict[int, list[int]] = defaultdict(list)
@@ -179,12 +187,13 @@ def summary(db: Session, f: PipelineFilters, today: date) -> dict:
         segment = p.segment or p.client.segment
         _group(by_segment, segment.id, segment.name, p)
         _group(by_service, p.service_id, p.service.name, p)
-        for stage_id, days in stage_durations(p, events.get(p.id, []), today):
-            durations[stage_id].append(days)
+        for visit in visits(p, events.get(p.id, []), cutoff(today)):
+            if visit.completed:
+                durations[visit.stage].append(visit.days)
 
     for stage_id, values in durations.items():
         if stage_id in by_stage and values:
-            by_stage[stage_id]["avg_days"] = sum(values) / len(values)
+            by_stage[stage_id].update(duration_statistics(values))
 
     def ordered(items: dict) -> list[dict]:
         return _rounded(sorted(items.values(), key=lambda i: (-i["amount"], i["label"])))
@@ -222,7 +231,7 @@ def project_changes(project: Project, events: list[AuditLog], start: date, end: 
 
     timeline = stage_timeline(project, events)
     if timeline:
-        base = _stage_at(timeline, date.fromordinal(start.toordinal() - 1))
+        base = _stage_at(timeline, date.fromordinal(max(1, start.toordinal() - 1)))
         if base is None:
             base = timeline[0][1]
         final = _stage_at(timeline, end)
@@ -240,12 +249,6 @@ def project_changes(project: Project, events: list[AuditLog], start: date, end: 
         before = financial[0].payload.get("before") or []
         after = financial[-1].payload.get("after") or []
         delta = _revenue_total(after) - _revenue_total(before)
-    else:
-        updates = [e for e in in_period if e.action == "update" and isinstance(e.payload.get("before"), dict)]
-        if updates:
-            delta = _decimal(updates[-1].payload["after"].get("amount")) - _decimal(
-                updates[0].payload["before"].get("amount")
-            )
     if delta > 0:
         found.append("revenue_up")
     elif delta < 0:
@@ -273,26 +276,25 @@ def project_changes(project: Project, events: list[AuditLog], start: date, end: 
 def gantt(db: Session, project: Project, today: date) -> dict:
     """Отрезки этапов по истории изменений и месяцы выручки и затрат для диаграммы Ганта."""
     events = project_events(db, [project.id]).get(project.id, [])
-    end = _day(project.archived_at) if project.archived_at is not None else today
-    stages: list[dict] = []
-    if project.stage_scheme == "customer":
-        names = dict(db.execute(select(ReferenceValue.id, ReferenceValue.name).where(
-            ReferenceValue.category == "customer_stage",
-        )).all())
-        timeline = stage_timeline(project, events)
-        for i, (started, stage_id) in enumerate(timeline):
-            finished = _day(timeline[i + 1][0]) if i + 1 < len(timeline) else end
-            stages.append({"label": names.get(stage_id, "Этап удалён"), "start": _day(started), "end": finished})
-    else:
-        label = STAGE_LABELS.get(project.stage, "Прежняя стадия") if project.stage else "Прежняя стадия"
-        stages.append({"label": label, "start": project.start_date, "end": project.closed_at or end})
+    names = dict(db.execute(select(ReferenceValue.id, ReferenceValue.name).where(
+        ReferenceValue.category == "customer_stage",
+    )).all())
+    stages = []
+    for visit in visits(project, events, cutoff(today)):
+        label = visit.label or names.get(visit.stage) or STAGE_LABELS.get(visit.stage, "Этап")
+        for start, end in visit.pieces:
+            stages.append({"label": label, "start": start, "end": end,
+                           "completed": visit.completed, "known_start": visit.known_start,
+                           "duration_days": (end - start).total_seconds() / 86400})
 
     def months(kind: str) -> list[dict]:
-        totals: dict[tuple[int, int], Decimal] = defaultdict(Decimal)
+        totals: dict[tuple, Decimal] = defaultdict(Decimal)
         for entry in project.financial_entries:
             if entry.kind == kind:
-                totals[(entry.year, entry.month)] += entry.amount
-        return [{"year": y, "month": m, "amount": float(v)} for (y, m), v in sorted(totals.items())]
+                status = entry.status.name if entry.status else "Не указан"
+                totals[(entry.year, entry.month, entry.vat_included, status)] += entry.amount
+        return [{"year": y, "month": m, "amount": float(v), "vat_included": vat, "status": status}
+                for (y, m, vat, status), v in sorted(totals.items())]
 
     return {"stages": stages, "revenue": months("revenue"), "costs": months("cost")}
 

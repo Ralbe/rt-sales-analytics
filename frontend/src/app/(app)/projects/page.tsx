@@ -1,5 +1,8 @@
 "use client";
 
+import { ProjectPrint } from "@/components/ProjectPrint";
+import type { Project } from "@/lib/types";
+
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -62,6 +65,8 @@ const COLUMNS: { key: string; label: string; sort?: string; num?: boolean; width
   { key: "project_status", label: "Статус проекта", width: 280 },
   { key: "realized_work", label: "Сделано за период", width: 320 },
   { key: "period_plan", label: "Планы на период", width: 320 },
+  { key: "profit", label: "Прибыль, ₽", num: true },
+  { key: "project_sheet", label: "Лист проекта", width: 170 },
 ];
 
 export default function ProjectsPage() {
@@ -72,6 +77,7 @@ export default function ProjectsPage() {
   const filterLabel = (key: ProjectFieldKey, original: string) =>
     label(key) === PROJECT_FIELD_DEFAULTS[key].label ? original : label(key);
   const refs = refsQuery.data;
+  const [printProject, setPrintProject] = useState<Project>();
   const [search, setSearch] = useState("");
   const [segments, setSegments] = useState<number[]>([]);
   const [services, setServices] = useState<number[]>([]);
@@ -147,7 +153,9 @@ export default function ProjectsPage() {
     placeholderData: keepPreviousData,
   });
   const { data, isFetching } = projectsQuery;
-  const pipelineFilters = { segment_id: segments, service_id: services, manager_id: managers };
+  const pipelineFilters = { segment_id: segments, service_id: services, manager_id: managers,
+    customer_stage_id: customerStage ? [Number(customerStage)] : [], implementation_year: implementationYear || undefined,
+    q, archived, open_only: openOnly, stage: stages };
   const changesQuery = useQuery({
     queryKey: ["analytics", "changes", pipelineFilters, createdFrom, createdTo],
     queryFn: () => api<PeriodChangesResponse>("/analytics/changes", {
@@ -213,7 +221,7 @@ export default function ProjectsPage() {
               value={customerStage ?? ""}
               onChange={(e) => withReset(setCustomerStage)(e.target.value ? Number(e.target.value) : undefined)}
             >
-              <option value="">{label("customer_stage_id")}: все</option>
+              <option value="">Этапы: все</option>
               {refs.customer_stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             <select
@@ -243,11 +251,11 @@ export default function ProjectsPage() {
 
       <div className="page-body">
         <details className="overview" open>
-          <summary>Показатели воронки (этапы 1–10, без архива)</summary>
+          <summary>Воронка по этапам заказчика</summary>
           <PipelineSummary filters={pipelineFilters} changes={createdFrom && createdTo && !error ? changesQuery.data : undefined} />
         </details>
-        <fieldset style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
-          <legend>Отметить проекты, созданные за период (UTC)</legend>
+        <fieldset className="period-picker" style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
+          <legend>Период создания</legend>
           <div className="filters">
             <label>Период событий <select className="input" aria-label="Период событий" value={periodPreset} onChange={(event) => selectPeriod(event.target.value as PeriodPreset | "")}>
               <option value="">Не выбран</option><option value="week">Неделя</option><option value="month">Месяц</option><option value="quarter">Квартал</option><option value="custom">Произвольный период</option>
@@ -256,16 +264,15 @@ export default function ProjectsPage() {
             <label>По <input className="input" type="date" aria-label="Конец периода создания (UTC)" value={createdTo} onChange={(event) => updatePeriod(createdFrom, event.target.value, "custom")} /></label>
             <button type="button" className="btn small" disabled={!createdFrom && !createdTo && !periodPreset && !urlPeriodError} onClick={() => updatePeriod("", "", "")}>Сбросить период</button>
           </div>
-          <p className="hint">Неделя начинается в понедельник. Даты включаются полностью по UTC.</p>
           {error && <p className="error" role="alert">{error}</p>}
           {changesQuery.error && <p className="hint">Не удалось загрузить индикаторы изменений за период.</p>}
         </fieldset>
         <label className="check">
-          <input type="checkbox" checked={openOnly} aria-describedby="open-projects-scope" onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
-          Только открытые проекты прежних стадий
+          <input type="checkbox" checked={openOnly} onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
+          Только открытые проекты
         </label>
-        <p className="hint" id="open-projects-scope">Фильтр открытых проектов применяется только к прежним шести стадиям. Проекты с новыми этапами не включаются.</p>
         <QueryState query={refsQuery} title="Не удалось загрузить справочники фильтров" loadingText="Загружаем справочники фильтров…" />
+        {printProject && <div className="card project-sheet-preview"><div className="gantt-toolbar"><h2>{printProject.name}</h2><button className="btn" onClick={() => setPrintProject(undefined)}>Закрыть лист</button></div><ProjectPrint key={printProject.id} project={printProject} /></div>}
         <QueryState query={projectsQuery} title="Не удалось загрузить проекты" loadingText="Загружаем проекты…" />
         <div className="card" style={{ overflow: "auto", opacity: isFetching ? 0.7 : 1 }}>
           <table className="table" style={{ tableLayout: "fixed", minWidth: COLUMNS.reduce((sum, c) => sum + (c.width ?? 160), 0) }}>
@@ -318,6 +325,8 @@ export default function ProjectsPage() {
                   <td>{p.project_status || "—"}</td>
                   <td>{p.realized_work || "—"}</td>
                   <td>{p.period_plan || "—"}</td>
+                  <td className="num">{fullAmount(p.profit ?? "0")}</td>
+                  <td><button className="btn small" onClick={(e) => { e.stopPropagation(); setPrintProject(p); }}>Лист проекта</button></td>
                 </tr>
               ))}
               {!projectsQuery.error && data && data.items.length === 0 && (

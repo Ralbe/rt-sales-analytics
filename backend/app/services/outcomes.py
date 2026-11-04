@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import STAGE_LABELS, Client, Project, Stage
 from app.services.analytics import Filters, _apply_filters
-from app.services.pipeline import SUCCESS_STAGE_CODE, _day, project_events, stage_durations
+from app.services.pipeline import SUCCESS_STAGE_CODE, _day, project_events
+from app.services.stage_intervals import cutoff, visits
 
 THOUSAND = Decimal("1000")
 STATUS_LABELS = {"implemented": "Реализованные", "in_progress": "В работе"}
@@ -106,19 +107,20 @@ def _reason(p: Project) -> str | None:
 
 def failures(db: Session, f: Filters, today: date, limit: int = 20) -> dict:
     """Почему проекты не выполнены: снятые, проигранные, отток, исключённые и застрявшие на этапе."""
-    projects = _projects(db, f, include_archived=True)
+    projects = _projects(db, f, include_archived=f.can_view_archive)
     customer = [p for p in projects if p.stage_scheme == "customer"]
     events = project_events(db, [p.id for p in customer])
 
     # Среднее время на этапе считается по всем проектам выборки на этапах заказчика.
     durations: dict[int, list[int]] = defaultdict(list)
-    current_days: dict[int, int] = {}
+    current_days: dict[int, float] = {}
     for p in customer:
-        spans = stage_durations(p, events.get(p.id, []), today)
-        for stage_id, days in spans:
-            durations[stage_id].append(days)
-        if spans:
-            current_days[p.id] = spans[-1][1]
+        history = visits(p, events.get(p.id, []), cutoff(today))
+        for visit in history:
+            if visit.completed:
+                durations[visit.stage].append(visit.days)
+        if history and not history[-1].completed:
+            current_days[p.id] = history[-1].days
     average = {stage_id: sum(v) / len(v) for stage_id, v in durations.items() if v}
 
     found = []

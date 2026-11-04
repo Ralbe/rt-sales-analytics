@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core import cache
 from app.db import get_db
 from app.deps import get_current_user, manager_scope
-from app.models import User
+from app.models import Role, User
 from app.schemas import (
     BreakdownOut,
     FailuresOut,
@@ -39,6 +39,7 @@ def get_filters(
         service_ids=tuple(sorted(service_id)),
         manager_ids=tuple(sorted(manager_id)),
         scope_manager_id=manager_scope(user),
+        can_view_archive=user.role == Role.admin,
     )
 
 
@@ -97,16 +98,24 @@ def get_pipeline_filters(
     service_id: list[int] = Query(default=[]),
     manager_id: list[int] = Query(default=[]),
     customer_stage_id: list[int] = Query(default=[]),
+    stage: list[str] = Query(default=[]),
     implementation_year: int | None = Query(default=None, ge=1900, le=2200),
+    q: str = Query(default="", max_length=100),
+    open_only: bool = False,
+    archived: bool = False,
     user: User = Depends(get_current_user),
 ) -> PipelineFilters:
+    if archived and user.role != Role.admin:
+        raise HTTPException(403, "Архив доступен только администратору")
     return PipelineFilters(
+        q=q, open_only=open_only, archived=archived, stages=tuple(sorted(stage)),
         segment_ids=tuple(sorted(segment_id)),
         service_ids=tuple(sorted(service_id)),
         manager_ids=tuple(sorted(manager_id)),
         customer_stage_ids=tuple(sorted(customer_stage_id)),
         implementation_year=implementation_year,
         scope_manager_id=manager_scope(user),
+        can_view_archive=user.role == Role.admin,
     )
 
 
@@ -156,3 +165,18 @@ def project_failures(
 ) -> Any:
     """Невыполненные проекты и их причины."""
     return outcomes.failures(db, f, as_of or date.today(), limit)
+
+
+@router.get("/trend-monthly", response_model=TrendOut)
+def trend_monthly(
+    year: int = Query(ge=1900, le=2200),
+    months: list[int] = Query(default=list(range(1, 13))),
+    metric: TrendMetric = "funnel",
+    f: Filters = Depends(get_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    if not months or len(months) > 12 or any(m < 1 or m > 12 for m in months):
+        raise HTTPException(422, "Укажите месяцы от 1 до 12")
+    d = date.today()
+    return cached("trend_monthly", f, lambda: analytics.monthly_trend(db, f, year, months, metric, d),
+                  year=year, months=sorted(set(months)), metric=metric, as_of=d)

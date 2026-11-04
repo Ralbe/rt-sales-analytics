@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { ClientItem, Project, Refs, User } from "../../src/lib/types";
@@ -29,6 +30,7 @@ const TEXT_FIELDS = [
 async function openCard(page: Page, editing: boolean, initial: Partial<Project> = {}) {
   const state = { current: { ...structuredClone(PROJECT), ...initial }, writes: [] as Record<string, unknown>[] };
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/api/, "");
     if (request.method() === "GET") {

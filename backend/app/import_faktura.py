@@ -16,9 +16,10 @@ from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core import cache
 from app.core.security import hash_password
 from app.db import SessionLocal
 from app.models import (
@@ -54,6 +55,7 @@ class ImportResult:
     clients: int = 0
     managers: int = 0
     warnings: list[str] = field(default_factory=list)
+    items: list[dict] = field(default_factory=list)
 
 
 def norm(value) -> str:
@@ -62,15 +64,25 @@ def norm(value) -> str:
 
 
 def read_rows(path: Path) -> list[dict]:
-    ws = load_workbook(path, data_only=True, read_only=True)[SHEET]
-    rows = ws.iter_rows(min_row=HEADER_ROW, values_only=True)
-    header = [norm(h) for h in next(rows)]
-    result = []
-    for values in rows:
-        row = dict(zip(header, values, strict=False))
-        if row.get("Клиент") and row.get("Описание проекта"):
-            result.append(row)
-    return result
+    book = load_workbook(path, data_only=True, read_only=True)
+    try:
+        rows = book[SHEET].iter_rows(min_row=HEADER_ROW, values_only=True)
+        header = [norm(h) for h in next(rows)]
+        result = []
+        for number, values in enumerate(rows, HEADER_ROW + 1):
+            row = dict(zip(header, values, strict=False))
+            row.update(_source_row=number, _source_file=path.name)
+            if row.get("Клиент") and row.get("Описание проекта"):
+                result.append(row)
+        return result
+    finally:
+        book.close()
+
+
+def lock_imports(db: Session):
+    # Две одновременные загрузки не должны создавать одни и те же проекты и справочники.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(select(func.pg_advisory_xact_lock(7346315)))
 
 
 def _reference(db: Session, category: str) -> dict[str, ReferenceValue]:
@@ -110,6 +122,8 @@ def _manager(db: Session, surname: str, cache: dict[str, User], result: ImportRe
 
 
 def _created_at(value) -> datetime:
+    if isinstance(value, str) and value:
+        value = datetime.fromisoformat(value)
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, date):
@@ -117,7 +131,8 @@ def _created_at(value) -> datetime:
     return datetime.now(UTC)
 
 
-def import_rows(db: Session, rows: list[dict], author: User) -> ImportResult:
+def import_rows(db: Session, rows: list[dict], author: User, *, commit: bool = True) -> ImportResult:
+    lock_imports(db)
     result = ImportResult()
     stages = _reference(db, "customer_stage")
     payment_types = _reference(db, "payment_type")
@@ -130,11 +145,13 @@ def import_rows(db: Session, rows: list[dict], author: User) -> ImportResult:
     managers: dict[str, User] = {}
 
     for number, row in enumerate(rows, start=HEADER_ROW + 1):
+        number = row.get("_source_row", number)
         client_name, project_name = norm(row["Клиент"]), norm(row["Описание проекта"])
         stage = _match(stages, row.get("Этап"))
         if stage is None:
             result.warnings.append(f"Строка {number}: этап «{norm(row.get('Этап'))}» не найден, строка пропущена")
             result.skipped += 1
+            result.items.append({"row": number, "status": "skipped"})
             continue
 
         segment_name = norm(row.get("Сегмент"))
@@ -158,18 +175,25 @@ def import_rows(db: Session, rows: list[dict], author: User) -> ImportResult:
         if client is None:
             client = db.scalar(select(Client).where(Client.name == client_name))
         if client is None:
-            client = Client(name=client_name, inn=inn or f"F{number:011d}", segment=segments[segment_name])
+            # Технический номер для клиента без ИНН уникален между разными файлами.
+            placeholder = "F" + secrets.token_hex(6)[:11]
+            while not inn and db.scalar(select(Client.id).where(Client.inn == placeholder)):
+                placeholder = "F" + secrets.token_hex(6)[:11]
+            client = Client(name=client_name, inn=inn or placeholder, segment=segments[segment_name])
             db.add(client)
             db.flush()
             result.clients += 1
 
         if db.scalar(select(Project.id).where(Project.client_id == client.id, Project.name == project_name)):
             result.skipped += 1
+            result.items.append({"row": number, "status": "skipped"})
             continue
 
         created_at = _created_at(row.get("Дата"))
         year = int(row.get("Год реализации") or created_at.year)
         months = [Decimal(str(row.get(m) or 0)) for m in MONTHS]
+        if any(not value.is_finite() or value < 0 for value in months):
+            raise ValueError(f"Строка {number}: недопустимая месячная сумма")
         total = sum(months, Decimal("0"))
         industry = norm(row.get("Отраслевое решени")).casefold() == "да"
         assessment = _match(assessments, row.get("Принимаемый к оценке"))
@@ -204,7 +228,8 @@ def import_rows(db: Session, rows: list[dict], author: User) -> ImportResult:
             updated_at=created_at,
         )
         project.financial_entries = [
-            ProjectFinancialEntry(kind="revenue", year=year, month=i + 1, amount=amount, vat_included=False,
+            ProjectFinancialEntry(kind="revenue", year=year, month=i + 1, amount=amount,
+                                  vat_included=bool(row.get("_vat_included", False)),
                                   status=revenue_status)
             for i, amount in enumerate(months)
             if amount > 0
@@ -214,10 +239,14 @@ def import_rows(db: Session, rows: list[dict], author: User) -> ImportResult:
         db.add(AuditLog(
             user_id=author.id, action="create", entity="project", entity_id=project.id, created_at=created_at,
             payload={"name": project.name, "after": project_snapshot(db, project), "author_name": author.full_name,
-                     "source": "Keys_YuFU_Faktura.xlsx"},
+                     "source": row.get("_source_file", "Keys_YuFU_Faktura.xlsx")},
         ))
         result.created += 1
-    db.commit()
+        result.items.append({"row": number, "status": "created", "project_id": project.id})
+    if commit:
+        db.commit()
+        cache.bump("analytics")
+        cache.bump("refs")
     return result
 
 

@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 
 import { Chart } from "@/components/Chart";
 import { api } from "@/lib/api";
-import { count, date, money, pct } from "@/lib/format";
+import { chartMoney, count, date, money, moneyFull, pct } from "@/lib/format";
 import { managerName } from "@/lib/reference-options";
 import { useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldLabels } from "@/lib/project-field-labels";
@@ -83,10 +83,10 @@ export function KpiView({ widget, data }: { widget: Widget; data: KpiResponse })
 }
 
 export function TrendWidget({ widget, filters }: Props) {
-  const { metric = "funnel", weeks = 6 } = widget.config;
+  const { metric = "funnel", year = new Date().getFullYear(), months = Array.from({ length: 12 }, (_, i) => i + 1) } = widget.config;
   const q = useQuery({
     queryKey: widgetQueryKey(widget, filters),
-    queryFn: () => api<TrendResponse>("/analytics/trend", { query: { ...filterQuery(filters), metric, weeks } }),
+    queryFn: () => api<TrendResponse>("/analytics/trend-monthly", { query: { ...filterQuery(filters), metric, year, months } }),
   });
   if (!q.data) return <State loading={q.isLoading} error={q.error} />;
   return <TrendView widget={widget} data={q.data} />;
@@ -97,14 +97,15 @@ export function TrendView({ widget, data, printable = false }: { widget: Widget;
   const { metric = "funnel", chart = "line" } = widget.config;
   const { history } = data;
   const f = fmt(metric);
+  const scale = chartMoney(history.map((p) => p.value));
   const option: EChartsOption = {
-    grid: { left: 8, right: 16, top: 12, bottom: 4, containLabel: true },
+    grid: { left: 8, right: 24, top: 32, bottom: 8, containLabel: true },
     tooltip: { trigger: "axis", valueFormatter: (v) => (v === null || v === undefined ? "—" : f(Number(v))) },
     xAxis: {
-      type: "category", data: history.map((p) => date(p.date).slice(0, 5)), boundaryGap: chart === "bar",
+      type: "category", data: history.map((p) => date(p.date).slice(3)), boundaryGap: chart === "bar",
       axisLabel: { hideOverlap: true },
     },
-    yAxis: { type: "value", scale: true, axisLabel: { formatter: (v: number) => f(v) } },
+    yAxis: { type: "value", name: isMoney(metric) ? scale.unit : "проектов", nameTextStyle: { align: "left" }, axisLabel: { formatter: (v: number) => isMoney(metric) ? scale.format(v) : count(v) } },
     series: [{
       name: metric === "projects" ? "Проектов в работе" : "Сумма проектов в работе",
       type: chart === "bar" ? "bar" : "line",
@@ -135,7 +136,8 @@ export function BreakdownWidget({ widget, filters }: Props) {
 }
 
 export function BreakdownView({ widget, data, printable = false, refs }: { widget: Widget; data: BreakdownResponse; printable?: boolean; refs?: Refs }) {
-  const { metric = "funnel", chart = "bar" } = widget.config;
+  const { metric = "funnel" } = widget.config;
+  const chart = ["pie", "donut"].includes(widget.config.chart ?? "") ? "hbar" : widget.config.chart ?? "hbar";
   const items = data.group_by === "manager" ? data.items.map((item) => ({
     ...item, label: managerName({ id: Number(item.key), full_name: item.label }, refs),
   })) : data.items;
@@ -147,13 +149,14 @@ export function BreakdownView({ widget, data, printable = false, refs }: { widge
     return (
       <AnalyticsFrame data={data} printable={printable}><div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
         <table className="table">
+          <colgroup><col style={{ width: "60%" }} /><col style={{ width: "25%" }} /><col style={{ width: "15%" }} /></colgroup>
           {printable && <thead><tr><th>Группа</th><th className="num">Значение</th><th className="num">Доля</th></tr></thead>}
           <tbody>
             {items.map((i) => (
               <tr key={i.key}>
                 <td>{i.label}</td>
                 <td className="num">{f(i.value)}</td>
-                <td className="num muted">{((i.value / total) * 100).toFixed(1)}%</td>
+                <td className="num muted">{new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(total ? i.value / total * 100 : 0)}%</td>
               </tr>
             ))}
           </tbody>
@@ -162,32 +165,21 @@ export function BreakdownView({ widget, data, printable = false, refs }: { widge
     );
   }
 
+  const scale = chartMoney(items.map((i) => i.value));
   let option: EChartsOption;
-  if (chart === "donut" || chart === "pie") {
-    option = {
-      tooltip: { trigger: "item", valueFormatter: (v) => f(Number(v)) },
-      legend: { show: !printable, type: "scroll", orient: "vertical", right: 0, top: "middle", itemWidth: 12, textStyle: { fontSize: 12 } },
-      series: [
-        {
-          type: "pie",
-          radius: chart === "donut" ? ["45%", "75%"] : "75%",
-          center: [printable ? "50%" : "35%", "50%"],
-          label: { show: false },
-          itemStyle: { borderColor: "#FFFFFF", borderWidth: 2 },
-          data: items.map((i) => ({ name: i.label, value: i.value })),
-        },
-      ],
-    };
-  } else {
+  {
     const horizontal = chart === "hbar";
     const cat = {
       type: "category" as const,
       data: items.map((i) => i.label),
       axisLabel: { interval: printable ? "auto" as const : 0, hideOverlap: printable, width: 110, overflow: "truncate" as const },
     };
-    const val = { type: "value" as const, axisLabel: { formatter: (v: number) => f(v) } };
+    const val = { type: "value" as const, name: isMoney(metric) ? scale.unit : "проектов",
+      nameLocation: horizontal ? "middle" as const : "end" as const, nameGap: horizontal ? 28 : 15,
+      nameTextStyle: { align: horizontal ? "center" as const : "left" as const },
+      axisLabel: { formatter: (v: number) => isMoney(metric) ? scale.format(v) : count(v) } };
     option = {
-      grid: { left: 8, right: 16, top: 12, bottom: 4, containLabel: true },
+      grid: { left: 8, right: 24, top: horizontal ? 12 : 32, bottom: horizontal ? 40 : 8, containLabel: true },
       tooltip: { trigger: "axis", valueFormatter: (v) => f(Number(v)) },
       xAxis: horizontal ? val : { ...cat, axisLabel: { ...cat.axisLabel, rotate: items.length > 4 ? 25 : 0 } },
       yAxis: horizontal ? { ...cat, inverse: true } : val,
@@ -201,6 +193,7 @@ export function BreakdownView({ widget, data, printable = false, refs }: { widge
         <>
           <p className="print-chart-note">Полные подписи и значения приведены в таблице под диаграммой.</p>
           <table className="table print-chart-values">
+            <colgroup><col style={{ width: "70%" }} /><col style={{ width: "30%" }} /></colgroup>
             <thead><tr><th>Группа</th><th className="num">Значение</th></tr></thead>
             <tbody>{items.map((item) => <tr key={item.key}><td>{item.label}</td><td className="num">{f(item.value)}</td></tr>)}</tbody>
           </table>
@@ -235,21 +228,26 @@ export function ProjectsView({ data, labels, printable = false, refs }: {
     <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
       <AnalyticsScopeNote data={data} />
       <table className="table">
+        <colgroup><col style={{ width: "22%" }} /><col style={{ width: "26%" }} /><col style={{ width: "12%" }} /><col style={{ width: "15%" }} /><col style={{ width: "13%" }} /><col style={{ width: "12%" }} /></colgroup>
         <thead>
           <tr>
-            <th>{labels.name}</th>
             <th>{labels.client_id}</th>
+            <th>{labels.name}</th>
+            <th>Этап</th>
             <th>{labels.manager_id}</th>
             <th className="num">{labels.amount}{PROJECT_FIELD_DEFAULTS.amount.suffix}</th>
+            <th>Последний месяц выручки</th>
           </tr>
         </thead>
         <tbody>
           {data.items.map((p) => (
             <tr key={p.id} className={printable ? undefined : "clickable"} onClick={printable ? undefined : () => router.push(`/projects/${p.id}`)}>
-              <td>{p.name}</td>
               <td>{p.client.name}</td>
+              <td>{p.name}</td>
+              <td>{p.customer_stage?.name ?? refs?.stages.find((s) => s.id === p.stage)?.name ?? "—"}</td>
               <td>{managerName(p.manager, refs)}</td>
-              <td className="num">{money(p.amount)}</td>
+              <td className="num">{moneyFull(p.amount).replace(/ ₽$/, "")}</td>
+              <td>{p.last_revenue_month ? date(p.last_revenue_month).slice(3) : "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -292,7 +290,7 @@ export function ProfitView({ data, printable = false }: { data: ProfitResponse; 
   const rows = [...data.groups, data.total];
   return (
     <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
-      <p className="hint" style={{ margin: "0 0 8px" }}>Выручка минус затраты по месячным строкам, без налогов и НДС.</p>
+      <p className="hint" style={{ margin: "0 0 8px" }}>По финансовым строкам, без пересчёта НДС.</p>
       <table className="table">
         <thead><tr><th>Проекты</th><th className="num">Кол-во</th><th className="num">Выручка</th><th className="num">Затраты</th><th className="num">Прибыль</th><th className="num">Маржа</th></tr></thead>
         <tbody>
@@ -345,7 +343,7 @@ export function FailuresView({ data, printable = false }: { data: FailuresRespon
   return (
     <div className="widget-table" style={printable ? undefined : { height: "100%", overflow: "auto" }}>
       <table className="table">
-        <thead><tr><th>Причина</th><th className="num">Проектов</th><th className="num">Сумма</th></tr></thead>
+        <thead><tr><th>Статус</th><th className="num">Проектов</th><th className="num">Сумма</th></tr></thead>
         <tbody>
           {data.by_reason.filter((r) => r.count > 0).map((r) => (
             <tr key={r.key}><td>{r.label}</td><td className="num">{count(r.count)}</td><td className="num">{money(r.amount)}</td></tr>
@@ -363,13 +361,14 @@ export function FailuresView({ data, printable = false }: { data: FailuresRespon
         ))}
       </div>
       <table className="table">
-        <thead><tr><th>Проект</th><th>Причина</th><th className="num">Дней на этапе</th></tr></thead>
+        <thead><tr><th>Проект</th><th>Статус</th><th className="num">Дней на этапе</th><th>Причина</th></tr></thead>
         <tbody>
           {data.items.map((p) => (
             <tr key={p.project_id}>
               <td style={{ whiteSpace: "normal" }}>{printable ? p.name : <Link href={`/projects/${p.project_id}`}>{p.name}</Link>}<div className="muted">{p.stage} · {p.manager}</div></td>
               <td style={{ whiteSpace: "normal" }}>{p.reason_label}</td>
-              <td className="num">{p.days_on_stage ?? "—"}</td>
+              <td className="num">{p.days_on_stage == null ? "—" : count(p.days_on_stage)}</td>
+              <td style={{ whiteSpace: "normal" }}>{p.reason === "stalled" ? data.stall_rule : "Не указана"}</td>
             </tr>
           ))}
         </tbody>

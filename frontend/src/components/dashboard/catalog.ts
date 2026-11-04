@@ -30,8 +30,6 @@ export const CHARTS: Record<"trend" | "breakdown", { id: ChartKind; name: string
   breakdown: [
     { id: "bar", name: "Столбцы" },
     { id: "hbar", name: "Горизонтальные столбцы" },
-    { id: "donut", name: "Кольцевая" },
-    { id: "pie", name: "Круговая" },
     { id: "table", name: "Таблица" },
   ],
 };
@@ -50,7 +48,7 @@ export function defaultConfig(type: WidgetType): WidgetConfig {
     case "kpi":
       return { metric: "funnel" };
     case "trend":
-      return { metric: "funnel", weeks: 6, chart: "line" };
+      return { metric: "funnel", year: new Date().getFullYear(), months: Array.from({ length: 12 }, (_, i) => i + 1), chart: "line" };
     case "breakdown":
       return { metric: "funnel", group_by: "segment", chart: "bar" };
     case "projects":
@@ -66,7 +64,7 @@ export function autoTitle(type: WidgetType, c: WidgetConfig): string {
     case "kpi":
       return metric;
     case "trend":
-      return `Динамика проектов: ${c.metric === "projects" ? "число" : "сумма"} за ${c.weeks} нед.`;
+      return `Динамика проектов: ${c.metric === "projects" ? "число" : "сумма"} за ${c.year ?? new Date().getFullYear()} год`;
     case "breakdown":
       return c.group_by === "segment"
         ? "Распределение по сегментам"

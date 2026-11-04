@@ -61,6 +61,8 @@ interface Snapshot {
   readonly sections: readonly Readonly<{ title: string; rows: readonly Row[] }>[];
   readonly revenue: readonly FinancialRow[];
   readonly costs: readonly FinancialRow[];
+  readonly withRevenue?: boolean;
+  readonly withCosts?: boolean;
 }
 
 const text = (value: string | number | null | undefined) => value === null || value === undefined || value === "" ? "Не указано" : String(value);
@@ -146,6 +148,10 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [phase, setPhase] = useState<"idle" | "preparing" | "ready">("idle");
+  const [selected, setSelected] = useState<string[]>(Object.keys(LABEL_KEYS));
+  const [fieldsOpen, setFieldsOpen] = useState(false);
+  const [withRevenue, setWithRevenue] = useState(true);
+  const [withCosts, setWithCosts] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const surface = useRef<HTMLElement>(null);
   const running = useRef(false);
@@ -247,7 +253,12 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
         setError("Печать недоступна: данные или доступ изменились. Обновите страницу и повторите попытку.");
         return;
       }
-      setSnapshot(makeSnapshot(saved, refs.data, { ...labels, ...overrides }));
+      const full = makeSnapshot(saved, refs.data, { ...labels, ...overrides });
+      setSnapshot({ ...full,
+        sections: full.sections.map((section) => ({ ...section, rows: section.rows.filter((r) => selected.includes(r.key)) })).filter((section) => section.rows.length),
+        revenue: withRevenue ? full.revenue : [], costs: withCosts ? full.costs : [],
+        withRevenue, withCosts,
+      });
     } catch {
       if (request !== attempt.current) return;
       setError("Печать недоступна: не удалось проверить доступ к сохранённому проекту. Обновите страницу и повторите попытку.");
@@ -258,13 +269,21 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
 
   return (
     <>
+      <details className="print-fields" onToggle={(e) => setFieldsOpen(e.currentTarget.open)}><summary>Поля листа проекта</summary>
+        {fieldsOpen && <fieldset disabled={phase !== "idle"} className="check-options">{Object.keys(LABEL_KEYS).filter((key) => !key.startsWith("financial_") && !["vat_included", "revenue_status", "cost_status", "article", "cost_type", "revenue_title", "cost_title"].includes(key)).map((key) =>
+          <label key={key}><input type="checkbox" checked={selected.includes(key)} onChange={(e) => setSelected((values) => e.target.checked ? [...values, key] : values.filter((k) => k !== key))} />
+            {configuredLabels.label(LABEL_KEYS[key as keyof Labels]!)}</label>)}
+          <label><input type="checkbox" checked={withRevenue} onChange={(e) => setWithRevenue(e.target.checked)} /> Выручка</label>
+          <label><input type="checkbox" checked={withCosts} onChange={(e) => setWithCosts(e.target.checked)} /> Затраты</label>
+        </fieldset>}
+      </details>
       <div className="project-print-action">
         <button type="button" className="btn small" disabled={blocked || phase !== "idle" || !target} onClick={print} aria-describedby="project-print-hint">
           PDF / Печать карточки
         </button>
         <span id="project-print-hint" className="muted" role="status">
-          Печатаются только сохранённые данные. Чтобы включить правки формы, сначала сохраните карточку.
-          {" "}{error ?? (blocked ? "Печать недоступна до успешной загрузки проекта, справочников и профиля." : phase === "preparing" ? "Готовим печатный снимок…" : phase === "ready" ? "Закройте диалог печати, чтобы продолжить." : "В диалоге браузера выберите «Сохранить как PDF», формат A4.")}
+          Печатаются только сохранённые данные.
+          {" "}{error ?? (blocked ? "Печать недоступна до успешной загрузки проекта, справочников и профиля." : phase === "preparing" ? "Готовим печатный снимок…" : phase === "ready" ? "Закройте диалог печати, чтобы продолжить." : null)}
         </span>
       </div>
       {target && createPortal(
@@ -283,8 +302,8 @@ export function ProjectPrint({ project, pending = false, failed = false, labels:
               <dl>{section.rows.map((item) => <div key={item.key} data-project-field={item.key}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>
             </section>)}
             <p>Суммы карточки указаны в ₽; помесячные суммы — в тыс. рублей. Значения сохранены без конвертации и округления.</p>
-            <FinancialTable title={current.labels.revenue_title} kind="revenue" rows={current.revenue} labels={current.labels} />
-            <FinancialTable title={current.labels.cost_title} kind="cost" rows={current.costs} labels={current.labels} />
+            {current.withRevenue && <FinancialTable title={current.labels.revenue_title} kind="revenue" rows={current.revenue} labels={current.labels} />}
+            {current.withCosts && <FinancialTable title={current.labels.cost_title} kind="cost" rows={current.costs} labels={current.labels} />}
           </>}
         </section>, target,
       )}

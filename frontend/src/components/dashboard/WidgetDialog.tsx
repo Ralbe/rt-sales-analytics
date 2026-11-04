@@ -92,17 +92,20 @@ export function WidgetDialog({ widget, onSave, onClose }: Props) {
         )}
 
         {type === "trend" && (
-          <div className="form-grid" style={{ padding: 0 }}>
-            <div className="field">
-              <label>Период истории</label>
-              <select className="select" value={config.weeks} onChange={(e) => set({ weeks: Number(e.target.value) })}>
-                {[4, 5, 6, 8, 12].map((w) => (
-                  <option key={w} value={w}>
-                    {w} недель
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="form-grid">
+            <label className="field">Год
+              <input className="input" type="number" min={1900} max={2200} required
+                value={config.year ?? new Date().getFullYear()} onChange={(e) => set({ year: Number(e.target.value) })} />
+            </label>
+            <fieldset className="field"><legend>Месяцы</legend>
+              <div className="check-options">{Array.from({ length: 12 }, (_, i) => i + 1).map((month) => {
+                const selected = config.months ?? Array.from({ length: 12 }, (_, i) => i + 1);
+                return <label key={month}><input type="checkbox" checked={selected.includes(month)}
+                  disabled={selected.length === 1 && selected.includes(month)}
+                  onChange={(e) => set({ months: e.target.checked ? [...selected, month].sort((a, b) => a - b) : selected.filter((m) => m !== month) })} />
+                  {new Intl.DateTimeFormat("ru-RU", { month: "short" }).format(new Date(2026, month - 1, 1))}</label>;
+              })}</div>
+            </fieldset>
           </div>
         )}
 

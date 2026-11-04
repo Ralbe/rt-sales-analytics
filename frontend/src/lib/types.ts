@@ -63,6 +63,10 @@ export interface Project {
   amount: string;
   cost: string;
   margin: string;
+  revenue?: string;
+  financial_costs?: string;
+  profit?: string;
+  last_revenue_month?: string | null;
   margin_pct: number | null;
   probability: number;
   start_date: string;
@@ -157,6 +161,8 @@ export interface WidgetConfig {
   group_by?: GroupBy;
   chart?: ChartKind;
   weeks?: number;
+  year?: number;
+  months?: number[];
   horizon?: number;
   limit?: number;
 }
@@ -200,6 +206,9 @@ export interface PipelineGroup {
 export interface PipelineStage extends PipelineGroup {
   probability: number | null;
   avg_days: number | null;
+  median_days?: number | null;
+  mode_days?: number[];
+  visits?: number;
 }
 
 export interface PipelineResponse {

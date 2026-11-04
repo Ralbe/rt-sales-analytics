@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 import type { Dashboard, FinancialEntry, Project, Refs, Role, User } from "../../src/lib/types";
@@ -34,6 +35,7 @@ const unavailable: Handler = (route) => route.fulfill({ status: 503, body: "" })
 
 async function mockApi(page: Page, handlers: Record<string, Handler> = {}, role: Role = "analyst") {
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
     if (handlers[path]) return handlers[path](route);
     const responses: Record<string, unknown> = {

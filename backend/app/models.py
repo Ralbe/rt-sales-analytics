@@ -293,3 +293,32 @@ class ProjectFieldLabel(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     label: Mapped[str] = mapped_column(String(120), nullable=False)
+
+
+class ReportArchive(Base):
+    __tablename__ = "report_archives"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_snapshot_id: Mapped[str] = mapped_column(String(36), unique=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    owner_role: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str] = mapped_column(String(200))
+    report_version: Mapped[int | None] = mapped_column(Integer)
+    columns: Mapped[list] = mapped_column(JSON)
+    rows: Mapped[list] = mapped_column(JSON)
+    project_ids: Mapped[list] = mapped_column(JSON)
+    print_metadata: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectImport(Base):
+    __tablename__ = "project_imports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(200))
+    checksum: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="preview")
+    source_rows: Mapped[list] = mapped_column(JSON)
+    result: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

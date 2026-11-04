@@ -18,8 +18,8 @@ interface ReferenceValue {
 
 export default function ReferenceSettings() {
   const me = useMe();
-  if (!me.data) return <div className="page-body"><QueryState query={me} title="Не удалось проверить права доступа" /></div>;
-  if (me.data.role !== "admin") return <div className="page-body"><h1>Справочники</h1>
+  if (!me.data) return <div className="page-body reference-page"><QueryState query={me} title="Не удалось проверить права доступа" /></div>;
+  if (me.data.role !== "admin") return <div className="page-body reference-page"><h1>Справочники</h1>
     <p className="alert" role="alert">Раздел доступен только администратору.</p></div>;
   return <AdminReferences />;
 }
@@ -46,16 +46,15 @@ function AdminReferences() {
   });
   return <>
     <div className="page-header"><h1>Справочники</h1></div>
-    <div className="page-body">
+    <div className="page-body reference-page">
       <p>Неактивные значения сохраняются в существующих карточках и недоступны для новых назначений.</p>
-      <p className="muted">Порядок, вероятность и доступность этапов по ТЗ требуют отдельного согласования.</p>
       <QueryState query={categories} title="Не удалось загрузить справочники" />
       <label htmlFor="reference-category">Справочник</label>{" "}
       <select id="reference-category" className="select" value={category} disabled={mutation.isPending}
         onChange={(e) => { setCategory(e.target.value); setSuccess(""); mutation.reset(); }}>
         {Object.entries(categories.data ?? {}).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
       </select>
-      {category !== "customer_stage" && <div style={{ margin: "16px 0" }}>
+      {category !== "customer_stage" && <div className="reference-create" style={{ margin: "16px 0" }}>
         <label htmlFor="reference-new">Новое значение</label>{" "}
         <input id="reference-new" className="input" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />{" "}
         <button className="btn primary" disabled={mutation.isPending || !name.trim()} onClick={() => mutation.mutate({ name })}>Добавить</button>

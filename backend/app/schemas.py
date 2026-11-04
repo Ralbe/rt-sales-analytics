@@ -208,6 +208,10 @@ class ProjectOut(ORM):
     amount: Decimal
     cost: Decimal
     margin: Decimal
+    revenue: Decimal = Decimal(0)
+    financial_costs: Decimal = Decimal(0)
+    profit: Decimal = Decimal(0)
+    last_revenue_month: date | None = None
     margin_pct: float | None
     probability: int
     start_date: date
@@ -379,6 +383,9 @@ class PipelineGroup(BaseModel):
 class PipelineStage(PipelineGroup):
     probability: int | None
     avg_days: float | None
+    median_days: float | None = None
+    mode_days: list[float] = Field(default_factory=list)
+    visits: int = 0
 
 
 class PipelineTotals(BaseModel):
@@ -399,15 +406,20 @@ class PipelineOut(BaseModel):
 
 
 class GanttStage(BaseModel):
+    known_start: bool = True
     label: str
-    start: date
-    end: date
+    start: datetime
+    end: datetime
+    completed: bool = False
+    duration_days: float = 0
 
 
 class GanttMonth(BaseModel):
     year: int
     month: int
     amount: float
+    vat_included: bool
+    status: str
 
 
 class GanttOut(BaseModel):
@@ -480,7 +492,7 @@ class FailureProject(BaseModel):
     segment: str
     manager: str
     amount: float
-    days_on_stage: int | None
+    days_on_stage: float | None
     archived_at: date | None
 
 

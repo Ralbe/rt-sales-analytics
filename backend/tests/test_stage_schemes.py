@@ -11,7 +11,7 @@ from app.api import analytics as analytics_api
 from app.api import projects
 from app.main import app
 from app.models import AuditLog, Project, ReferenceValue, Stage
-from app.schemas import ANALYTICS_SCOPE_NOTE, LEGACY_STAGE_SCOPE_NOTE
+from app.schemas import ANALYTICS_SCOPE_NOTE
 from app.services import analytics
 from app.services.project_field_labels import same_project_values
 from app.services.project_history import PROJECT_FIELDS, project_snapshot
@@ -180,7 +180,7 @@ def test_customer_stage_cannot_be_cleared_or_replaced_by_legacy_stage(as_user, d
         assert as_user.get(f"/api/projects/{saved['id']}").json() == saved
 
 
-def test_registry_contains_both_schemes_but_open_only_is_legacy(as_user, db):
+def test_registry_and_open_filter_contain_both_stage_schemes(as_user, db):
     legacy = create_legacy_project(db, name="Поколения старый")
     customer = _create(as_user, db, name="Поколения новый")
     page = as_user.get("/api/projects", params={"q": "Поколения"}).json()
@@ -188,9 +188,9 @@ def test_registry_contains_both_schemes_but_open_only_is_legacy(as_user, db):
     all_rows = page["items"]
     assert {p["id"] for p in all_rows} == {legacy.id, customer["id"]}
     page = as_user.get("/api/projects", params={"q": "Поколения", "open_only": True}).json()
-    assert page["stage_scope"] == "legacy" and page["scope_note"] == LEGACY_STAGE_SCOPE_NOTE
+    assert page["stage_scope"] == "all" and page["scope_note"] is None
     open_rows = page["items"]
-    assert [p["id"] for p in open_rows] == [legacy.id]
+    assert {p["id"] for p in open_rows} == {legacy.id, customer["id"]}
 
 
 def test_xlsx_labels_null_legacy_stage_as_not_applicable(as_analyst, db):

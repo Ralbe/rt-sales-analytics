@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test } from "@playwright/test";
 
 test("форма передаёт ID сохранённой и явный null новой финансовой строки", async ({ page }) => {
@@ -24,6 +25,7 @@ test("форма передаёт ID сохранённой и явный null �
   };
   let body: { financial_entries: { id?: number | null }[] } | undefined;
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === "/api/auth/me") return route.fulfill({ json: { id: 1, email: "t@example.test", full_name: "Менеджер", role: "analyst" } });
@@ -43,7 +45,7 @@ test("форма передаёт ID сохранённой и явный null �
   const finances = page.getByRole("group", { name: "Помесячная выручка и затраты" });
   await finances.getByRole("button", { name: "Удалить", exact: true }).first().click();
   await finances.getByRole("button", { name: "Добавить финансовую строку" }).click();
-  const row = finances.locator(".row2").nth(1);
+  const row = finances.locator(".financial-entry").nth(1);
   await row.getByLabel("Сумма, тыс. ₽").fill("25.000");
   await row.getByLabel("Статус начисления выручки").selectOption("4");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();

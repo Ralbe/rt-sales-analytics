@@ -11,7 +11,6 @@ from test_projects import _payload
 
 from app.api.projects import export_projects
 from app.models import Project, ReferenceValue, User
-from app.schemas import LEGACY_STAGE_SCOPE_NOTE
 
 
 def _entry(refs, kind="cost", vat=True):
@@ -91,7 +90,7 @@ def test_xlsx_serializes_timezone_and_keeps_text_literal(db, created_at):
 
 
 @pytest.mark.parametrize("empty", [False, True], ids=["populated", "empty"])
-def test_open_only_xlsx_explains_legacy_scope_without_changing_project_layout(as_analyst, db, empty):
+def test_open_only_xlsx_matches_registry_for_both_stage_schemes(as_analyst, db, empty):
     legacy = create_legacy_project(db, name="Область XLSX прежний", probability=37)
     closed = create_legacy_project(db, name="Область XLSX завершённый", stage="won")
     response = as_analyst.post("/api/projects", json=_payload(db, name="Область XLSX новый"))
@@ -113,17 +112,13 @@ def test_open_only_xlsx_explains_legacy_scope_without_changing_project_layout(as
     response = as_analyst.get("/api/projects/export.xlsx", params=query)
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), read_only=True)
-    assert workbook.sheetnames == ["Проекты (6 стадий)", "Область данных"]
-    assert workbook.active.title == "Проекты (6 стадий)"
+    assert workbook.sheetnames == ["Проекты"]
     rows = list(workbook.active.iter_rows(values_only=True))
     assert rows[0] == regular_rows[0]
     assert len(rows[0]) == 30
     assert [row[0] for row in rows[1:]] == [item["id"] for item in page["items"]]
-    assert {row[0] for row in rows[1:]} == (set() if empty else {legacy.id})
-    assert rows[1:] == [row for row in regular_rows[1:] if row[0] == legacy.id]
-    assert workbook.properties.description == page["scope_note"]
-    assert workbook.properties.description == LEGACY_STAGE_SCOPE_NOTE
-    note_cells = [cell for row in workbook["Область данных"].iter_rows(values_only=True) for cell in row]
-    assert LEGACY_STAGE_SCOPE_NOTE in note_cells
-    assert page["stage_scope"] == "legacy"
+    assert {row[0] for row in rows[1:]} == (set() if empty else {legacy.id, customer_id})
+    assert rows[1:] == [row for row in regular_rows[1:] if row[0] != closed.id]
+    assert workbook.properties.description is None and page["scope_note"] is None
+    assert page["stage_scope"] == "all"
     workbook.close()

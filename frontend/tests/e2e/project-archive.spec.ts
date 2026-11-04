@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test as base, type Page } from "@playwright/test";
 
 import type { ProjectHistoryItem } from "../../src/lib/history-types";
@@ -72,6 +73,7 @@ async function mockApi(page: Page): Promise<ApiState> {
       created_at: "2026-10-24T12:00:00Z", changes: [], note: null }],
   };
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;

@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { api, post } from "@/lib/api";
 import { FontSettings } from "@/components/FontSettings";
 import { QueryState } from "@/components/QueryState";
-import { ROLE_LABELS, canConfigureDashboards, canEditProjects } from "@/lib/hooks";
+import { canConfigureDashboards, canEditProjects } from "@/lib/hooks";
 import type { Dashboard, User } from "@/lib/types";
 
 /** Панель управления: состав пунктов зависит от роли пользователя. */
@@ -72,6 +72,7 @@ export function Sidebar({ user }: { user: User }) {
       </Link>
       {canConfigureDashboards(user.role) && <>
         <Link href="/reports" className={active("/reports")}>Доступные отчёты</Link>
+        <Link href="/reports/archive" className={active("/reports/archive")}>История отчётов</Link>
         <Link href="/reports/new" className={active("/reports/new")}>+ Конструктор отчётов</Link>
       </>}
 
@@ -88,6 +89,7 @@ export function Sidebar({ user }: { user: User }) {
       {user.role === "admin" && (
         <>
           <div className="section">Администрирование</div>
+          <Link href="/projects/import" className={active("/projects/import")}>Импорт проектов</Link>
           <Link href="/users" className={active("/users")}>
             Пользователи
           </Link>
@@ -103,7 +105,6 @@ export function Sidebar({ user }: { user: User }) {
 
       <div className="user">
         <div>{user.full_name}</div>
-        <div className="role">{ROLE_LABELS[user.role]}</div>
         <FontSettings />
         <button className="link" style={{ padding: "8px 0 0" }} onClick={logout}>
           Выйти

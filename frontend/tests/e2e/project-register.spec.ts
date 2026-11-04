@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { Project, ProjectPage, Refs } from "../../src/lib/types";
@@ -33,9 +34,33 @@ function project(overrides: Partial<Project> = {}): Project {
   };
 }
 
+test("статистика этапов: независимый выбор среднего, медианы, мод и серий", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await mockApi(page, [project({ name: "Тест статистики", profit: "110000" })]);
+  await page.route("**/api/analytics/pipeline**", (route) => route.fulfill({ json: {
+    totals: { count: 1, amount: 150000, weighted_amount: 75000, revenue: 150000, weighted_revenue: 75000 },
+    by_stage: [{ key: "10", label: "Согласование", count: 1, amount: 150000, weighted_amount: 75000,
+      avg_days: 3.6, median_days: 3, mode_days: [1, 3], visits: 5 }], by_manager: [], by_segment: [], by_service: [],
+  } }));
+  await page.goto("/projects");
+  const stats = page.getByRole("region", { name: "Показатели воронки" });
+  await stats.getByRole("checkbox", { name: "Медиана", exact: true }).check();
+  await stats.getByRole("checkbox", { name: "Мода", exact: true }).check();
+  await expect(stats.getByRole("cell", { name: "3 дн. 14 ч 24 мин", exact: true })).toBeVisible();
+  await expect(stats.getByRole("cell", { name: "1 дн., 3 дн.", exact: true })).toBeVisible();
+  await stats.getByRole("checkbox", { name: "Среднее", exact: true }).uncheck();
+  await expect(stats.getByRole("columnheader", { name: "Среднее", exact: true })).toHaveCount(0);
+  await stats.getByRole("checkbox", { name: "Сумма", exact: true }).uncheck();
+  await expect(stats.getByRole("checkbox", { name: "Количество проектов", exact: true })).toBeChecked();
+  // Анимация столбцов занимает 300 мс; снимок нужен после её завершения.
+  await page.waitForTimeout(400);
+  await stats.screenshot({ path: "test-results/stage-statistics.png" });
+});
+
 async function mockApi(page: Page, items = [project()], total = items.length) {
   const requests: URLSearchParams[] = [];
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const url = new URL(route.request().url());
     if (url.pathname === "/api/auth/me") {
       return route.fulfill({ json: { ...manager, email: "register@example.test", role: "analyst" } });
@@ -46,12 +71,11 @@ async function mockApi(page: Page, items = [project()], total = items.length) {
       requests.push(url.searchParams);
       const openOnly = url.searchParams.get("open_only") === "true";
       const filtered = openOnly
-        ? items.filter((item) => item.stage_scheme !== "customer" && item.stage !== null && !["won", "lost"].includes(item.stage))
+        ? items.filter((item) => item.stage_scheme === "customer" ? item.customer_stage?.id !== 99 : item.stage !== null && !["won", "lost"].includes(item.stage))
         : items;
       const result: ProjectPage = {
         items: filtered, total: filtered === items ? total : filtered.length, page: Number(url.searchParams.get("page")), size: 20,
-        stage_scope: openOnly ? "legacy" : "all",
-        scope_note: openOnly ? "Показатели рассчитаны только по проектам с прежними шестью стадиями. Проекты с новыми этапами не включены." : null,
+        stage_scope: "all", scope_note: null,
       };
       return route.fulfill({ json: result });
     }
@@ -179,7 +203,7 @@ test("реестр: пустой ответ сохраняет полный за
   await expect(empty).toHaveAttribute("colspan", String(await page.getByRole("columnheader").count()));
 });
 
-test("реестр показывает оба поколения; nullable legacy-поле имеет подпись «Не применяется», open_only ограничен legacy", async ({ page }) => {
+test("реестр и фильтр открытых проектов показывают оба поколения этапов", async ({ page }) => {
   const mixed = [
     project({ id: 41, name: "Прежний открытый проект", stage_scheme: "legacy" }),
     project({ id: 42, name: "Новый проект", stage_scheme: "customer", stage: null, probability: 80 }),
@@ -192,11 +216,10 @@ test("реестр показывает оба поколения; nullable lega
   await expect(await cell(page, "customer_stage_id", 1)).toHaveText(refs.customer_stages[0].name);
   await expect(await cell(page, "probability", 0)).toHaveText("37%");
   expect(requests.at(-1)?.has("open_only")).toBe(false);
-  const openOnly = page.getByLabel("Только открытые проекты прежних стадий", { exact: true });
-  await expect(openOnly).toHaveAccessibleDescription("Фильтр открытых проектов применяется только к прежним шести стадиям. Проекты с новыми этапами не включаются.");
+  const openOnly = page.getByLabel("Только открытые проекты", { exact: true });
   await openOnly.check();
   await expect.poll(() => requests.at(-1)?.get("open_only")).toBe("true");
-  await expect(page.locator("tbody tr")).toHaveCount(1);
+  await expect(page.locator("tbody tr")).toHaveCount(2);
   await expect(page.locator("tbody")).toContainText("Прежний открытый проект");
   const exportUrl = new URL((await page.getByRole("link", { name: "Выгрузить в Excel" }).getAttribute("href"))!, "http://localhost");
   expect(exportUrl.searchParams.get("open_only")).toBe("true");

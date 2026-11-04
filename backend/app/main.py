@@ -10,9 +10,11 @@ from app.api import (
     clients,
     dashboards,
     project_field_labels,
+    project_imports,
     projects,
     reference_admin,
     refs,
+    report_archives,
     reports,
     structural_references,
     users,
@@ -56,13 +58,13 @@ app.add_middleware(ReportRequestLimit)
 @app.middleware("http")
 async def report_snapshot_cache_control(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/api/report-snapshots"):
+    if request.url.path.startswith(("/api/report-snapshots", "/api/report-archives", "/api/project-imports")):
         response.headers["Cache-Control"] = "private, no-store"
     return response
 
 for module in (
     auth, refs, clients, projects, analytics, dashboards, users, project_field_labels,
-    reference_admin, structural_references, reports,
+    reference_admin, structural_references, reports, report_archives, project_imports,
 ):
     app.include_router(module.router, prefix="/api")
 
