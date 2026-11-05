@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.security import inn_is_valid
 from app.models import Role, Stage
 
+ANALYTICS_SCOPE_NOTE = "Динамика выполнения проектов. Остальные проекты (завершённые и снятые) не включены."
 LEGACY_STAGE_SCOPE_NOTE = (
     "Показатели рассчитаны только по проектам с прежними шестью стадиями. "
     "Проекты с новыми этапами не включены."
@@ -207,6 +208,10 @@ class ProjectOut(ORM):
     amount: Decimal
     cost: Decimal
     margin: Decimal
+    revenue: Decimal = Decimal(0)
+    financial_costs: Decimal = Decimal(0)
+    profit: Decimal = Decimal(0)
+    last_revenue_month: date | None = None
     margin_pct: float | None
     probability: int
     start_date: date
@@ -287,8 +292,8 @@ class KpiItem(BaseModel):
 
 
 class AnalyticsScope(BaseModel):
-    stage_scope: Literal["legacy"] = "legacy"
-    scope_note: str = LEGACY_STAGE_SCOPE_NOTE
+    stage_scope: Literal["legacy", "all"] = "all"
+    scope_note: str = ANALYTICS_SCOPE_NOTE
 
 
 class KpiOut(AnalyticsScope):
@@ -331,7 +336,7 @@ class BreakdownOut(AnalyticsScope):
 
 class Widget(BaseModel):
     id: str = Field(min_length=1, max_length=64)
-    type: Literal["kpi", "trend", "breakdown", "projects"]
+    type: Literal["kpi", "trend", "breakdown", "projects", "profit", "failures"]
     title: str = Field(max_length=200)
     x: int = Field(ge=0, le=11)
     y: int = Field(ge=0, le=100)
@@ -362,3 +367,140 @@ class DashboardOut(BaseModel):
     is_shared: bool
     editable: bool
     updated_at: datetime
+
+
+# --- Воронка, индикаторы и Гант ------------------------------------------
+
+
+class PipelineGroup(BaseModel):
+    key: str
+    label: str
+    count: int
+    amount: float
+    weighted_amount: float
+
+
+class PipelineStage(PipelineGroup):
+    probability: int | None
+    avg_days: float | None
+    median_days: float | None = None
+    mode_days: list[float] = Field(default_factory=list)
+    visits: int = 0
+
+
+class PipelineTotals(BaseModel):
+    count: int
+    amount: float
+    weighted_amount: float
+    revenue: float
+    weighted_revenue: float
+
+
+class PipelineOut(BaseModel):
+    as_of: date
+    totals: PipelineTotals
+    by_stage: list[PipelineStage]
+    by_manager: list[PipelineGroup]
+    by_segment: list[PipelineGroup]
+    by_service: list[PipelineGroup]
+
+
+class GanttStage(BaseModel):
+    known_start: bool = True
+    label: str
+    start: datetime
+    end: datetime
+    completed: bool = False
+    duration_days: float = 0
+
+
+class GanttMonth(BaseModel):
+    year: int
+    month: int
+    amount: float
+    vat_included: bool
+    status: str
+
+
+class GanttOut(BaseModel):
+    stages: list[GanttStage]
+    revenue: list[GanttMonth]
+    costs: list[GanttMonth]
+
+
+class PeriodChangeItem(BaseModel):
+    project_id: int
+    indicators: list[str]
+
+
+class PeriodChangesOut(BaseModel):
+    date_from: date
+    date_to: date
+    labels: dict[str, str]
+    counts: dict[str, int]
+    items: list[PeriodChangeItem]
+
+
+# --- Прибыль и причины невыполнения --------------------------------------
+
+
+class ProfitRow(BaseModel):
+    key: str
+    label: str
+    count: int
+    revenue: float
+    costs: float
+    profit: float
+    margin_pct: float | None
+
+
+class ProfitProject(BaseModel):
+    project_id: int
+    name: str
+    client: str
+    stage: str
+    status: str
+    revenue: float
+    costs: float
+    profit: float
+    margin_pct: float | None
+
+
+class ProfitOut(BaseModel):
+    groups: list[ProfitRow]
+    total: ProfitRow
+    items: list[ProfitProject]
+
+
+class FailureGroup(BaseModel):
+    label: str
+    count: int
+    amount: float
+
+
+class FailureReason(FailureGroup):
+    key: str
+
+
+class FailureProject(BaseModel):
+    project_id: int
+    name: str
+    client: str
+    reason: str
+    reason_label: str
+    stage: str
+    segment: str
+    manager: str
+    amount: float
+    days_on_stage: float | None
+    archived_at: date | None
+
+
+class FailuresOut(BaseModel):
+    total: int
+    by_reason: list[FailureReason]
+    by_stage: list[FailureGroup]
+    by_segment: list[FailureGroup]
+    by_manager: list[FailureGroup]
+    items: list[FailureProject]
+    stall_rule: str

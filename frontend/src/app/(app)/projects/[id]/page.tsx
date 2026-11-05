@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 
 import { ProjectForm } from "@/components/ProjectForm";
 import { ProjectArchiveActions } from "@/components/ProjectArchiveActions";
+import { ProjectGantt } from "@/components/ProjectGantt";
 import { ProjectHistory } from "@/components/ProjectHistory";
 import { ProjectPrint } from "@/components/ProjectPrint";
 import { QueryState } from "@/components/QueryState";
@@ -39,6 +40,7 @@ export default function ProjectPage() {
           </div>
         )}
         {project && <ProjectForm key={project.id} project={project} readOnly={!!project.archived_at} />}
+        {project && !projectQuery.error && <ProjectGantt projectId={project.id} />}
         {project && !projectQuery.error && <ProjectHistory projectId={project.id} />}
       </div>
     </>

@@ -105,6 +105,7 @@ def test_direct_downgrade_rejects_changed_client_segment(card_migration):  # noq
     clients, segments = metadata.tables["clients"], metadata.tables["segments"]
     with engine.begin() as connection:
         initial = connection.scalar(select(clients.c.segment_id).where(clients.c.id == 1))
+        initial_revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
         other = connection.scalar(select(segments.c.id).where(segments.c.id != initial).limit(1))
         connection.execute(clients.update().where(clients.c.id == 1).values(segment_id=other))
     projects_before = rows(engine, "projects")
@@ -114,7 +115,7 @@ def test_direct_downgrade_rejects_changed_client_segment(card_migration):  # noq
     with engine.connect() as connection:
         # SQLite may persist the no-op backfill downgrade before the guard runs.
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) in {
-            "0013_backfill", "0013_expand",
+            initial_revision, "0013_backfill", "0013_expand",
         }
     with engine.begin() as connection:
         connection.execute(clients.update().where(clients.c.id == 1).values(segment_id=initial))

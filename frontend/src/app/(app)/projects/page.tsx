@@ -1,11 +1,16 @@
 "use client";
 
+import { ProjectPrint } from "@/components/ProjectPrint";
+import type { Project } from "@/lib/types";
+
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { ChangeBadges } from "@/components/ChangeBadges";
 import { MultiSelect } from "@/components/MultiSelect";
+import { PipelineSummary } from "@/components/PipelineSummary";
 import { QueryState } from "@/components/QueryState";
 import { api, toQuery } from "@/lib/api";
 import { date } from "@/lib/format";
@@ -13,7 +18,7 @@ import { calendarPeriod, isPeriodDate, periodError, type PeriodPreset } from "@/
 import { canEditProjects, seesAllProjects, useDebounced, useMe, useRefs } from "@/lib/hooks";
 import { PROJECT_FIELD_DEFAULTS, useProjectFieldLabels, type ProjectFieldKey } from "@/lib/project-field-labels";
 import { managerName, managerFilterOptions, segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
-import type { ProjectPage, Stage } from "@/lib/types";
+import type { PeriodChangesResponse, ProjectPage, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 const COLUMN_FIELDS: Record<string, ProjectFieldKey> = {
@@ -53,12 +58,15 @@ const COLUMNS: { key: string; label: string; sort?: string; num?: boolean; width
   { key: "implementation_year", label: "Год реализации", sort: "implementation_year" },
   { key: "probability", label: "Вероятность, %", num: true },
   { key: "amount", label: "Сумма, ₽", sort: "amount", num: true, width: 210 },
+  { key: "weighted_amount", label: "С учётом вероятности, ₽", num: true, width: 210 },
   { key: "cost", label: "Себестоимость, ₽", num: true, width: 210 },
   { key: "margin", label: "Маржа, %", num: true },
   { key: "close", label: "План закрытия", sort: "expected_close_date" },
   { key: "project_status", label: "Статус проекта", width: 280 },
   { key: "realized_work", label: "Сделано за период", width: 320 },
   { key: "period_plan", label: "Планы на период", width: 320 },
+  { key: "profit", label: "Прибыль, ₽", num: true },
+  { key: "project_sheet", label: "Лист проекта", width: 170 },
 ];
 
 export default function ProjectsPage() {
@@ -69,6 +77,7 @@ export default function ProjectsPage() {
   const filterLabel = (key: ProjectFieldKey, original: string) =>
     label(key) === PROJECT_FIELD_DEFAULTS[key].label ? original : label(key);
   const refs = refsQuery.data;
+  const [printProject, setPrintProject] = useState<Project>();
   const [search, setSearch] = useState("");
   const [segments, setSegments] = useState<number[]>([]);
   const [services, setServices] = useState<number[]>([]);
@@ -144,6 +153,20 @@ export default function ProjectsPage() {
     placeholderData: keepPreviousData,
   });
   const { data, isFetching } = projectsQuery;
+  const pipelineFilters = { segment_id: segments, service_id: services, manager_id: managers,
+    customer_stage_id: customerStage ? [Number(customerStage)] : [], implementation_year: implementationYear || undefined,
+    q, archived, open_only: openOnly, stage: stages };
+  const changesQuery = useQuery({
+    queryKey: ["analytics", "changes", pipelineFilters, createdFrom, createdTo],
+    queryFn: () => api<PeriodChangesResponse>("/analytics/changes", {
+      query: { ...pipelineFilters, date_from: createdFrom, date_to: createdTo },
+    }),
+    enabled: Boolean(createdFrom && createdTo && !error),
+  });
+  const changes = useMemo(
+    () => new Map(changesQuery.data?.items.map((item) => [item.project_id, item.indicators] as const)),
+    [changesQuery.data],
+  );
 
   const withReset =
     <T,>(setter: (v: T) => void) =>
@@ -198,7 +221,7 @@ export default function ProjectsPage() {
               value={customerStage ?? ""}
               onChange={(e) => withReset(setCustomerStage)(e.target.value ? Number(e.target.value) : undefined)}
             >
-              <option value="">{label("customer_stage_id")}: все</option>
+              <option value="">Этапы: все</option>
               {refs.customer_stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             <select
@@ -227,8 +250,12 @@ export default function ProjectsPage() {
       </div>
 
       <div className="page-body">
-        <fieldset style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
-          <legend>Отметить проекты, созданные за период (UTC)</legend>
+        <details className="overview" open>
+          <summary>Воронка по этапам заказчика</summary>
+          <PipelineSummary filters={pipelineFilters} changes={createdFrom && createdTo && !error ? changesQuery.data : undefined} />
+        </details>
+        <fieldset className="period-picker" style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
+          <legend>Период создания</legend>
           <div className="filters">
             <label>Период событий <select className="input" aria-label="Период событий" value={periodPreset} onChange={(event) => selectPeriod(event.target.value as PeriodPreset | "")}>
               <option value="">Не выбран</option><option value="week">Неделя</option><option value="month">Месяц</option><option value="quarter">Квартал</option><option value="custom">Произвольный период</option>
@@ -237,15 +264,15 @@ export default function ProjectsPage() {
             <label>По <input className="input" type="date" aria-label="Конец периода создания (UTC)" value={createdTo} onChange={(event) => updatePeriod(createdFrom, event.target.value, "custom")} /></label>
             <button type="button" className="btn small" disabled={!createdFrom && !createdTo && !periodPreset && !urlPeriodError} onClick={() => updatePeriod("", "", "")}>Сбросить период</button>
           </div>
-          <p className="hint">Неделя начинается в понедельник. Даты включаются полностью по UTC.</p>
           {error && <p className="error" role="alert">{error}</p>}
+          {changesQuery.error && <p className="hint">Не удалось загрузить индикаторы изменений за период.</p>}
         </fieldset>
         <label className="check">
-          <input type="checkbox" checked={openOnly} aria-describedby="open-projects-scope" onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
-          Только открытые проекты прежних стадий
+          <input type="checkbox" checked={openOnly} onChange={(event) => withReset(setOpenOnly)(event.target.checked)} />
+          Только открытые проекты
         </label>
-        <p className="hint" id="open-projects-scope">Фильтр открытых проектов применяется только к прежним шести стадиям. Проекты с новыми этапами не включаются.</p>
         <QueryState query={refsQuery} title="Не удалось загрузить справочники фильтров" loadingText="Загружаем справочники фильтров…" />
+        {printProject && <div className="card project-sheet-preview"><div className="gantt-toolbar"><h2>{printProject.name}</h2><button className="btn" onClick={() => setPrintProject(undefined)}>Закрыть лист</button></div><ProjectPrint key={printProject.id} project={printProject} /></div>}
         <QueryState query={projectsQuery} title="Не удалось загрузить проекты" loadingText="Загружаем проекты…" />
         <div className="card" style={{ overflow: "auto", opacity: isFetching ? 0.7 : 1 }}>
           <table className="table" style={{ tableLayout: "fixed", minWidth: COLUMNS.reduce((sum, c) => sum + (c.width ?? 160), 0) }}>
@@ -262,7 +289,9 @@ export default function ProjectsPage() {
                     className={`${c.sort ? "sortable" : ""} ${c.num ? "num" : ""}`}
                     onClick={c.sort ? () => toggleSort(c.sort!) : undefined}
                   >
-                    {heading(COLUMN_FIELDS[c.key] ?? c.key as ProjectFieldKey)}
+                    {(COLUMN_FIELDS[c.key] ?? c.key) in PROJECT_FIELD_DEFAULTS
+                      ? heading(COLUMN_FIELDS[c.key] ?? c.key as ProjectFieldKey)
+                      : c.label}
                     {c.sort && sort.replace("-", "") === c.sort ? (sort.startsWith("-") ? " ↓" : " ↑") : ""}
                   </th>
                 ))}
@@ -271,7 +300,7 @@ export default function ProjectsPage() {
             <tbody style={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
               {data?.items.map((p) => (
                 <tr key={p.id} className="clickable" onClick={() => router.push(`/projects/${p.id}`)}>
-                  <td>{p.name}<CreationMarker value={p.created_at} from={error ? "" : createdFrom} to={createdTo} /></td>
+                  <td>{p.name}<CreationMarker value={p.created_at} from={error ? "" : createdFrom} to={createdTo} /><ChangeBadges indicators={changes.get(p.id)?.filter((key) => key !== "new")} /></td>
                   <td>{p.client.name}</td>
                   <td>{p.client_inn || "—"}</td>
                   <td>{p.segment.name}</td>
@@ -289,12 +318,15 @@ export default function ProjectsPage() {
                   <td>{p.implementation_year ?? "—"}</td>
                   <td className="num">{p.probability}%</td>
                   <td className="num">{fullAmount(p.amount)}</td>
+                  <td className="num">{fullAmount(String(Number(p.amount) * p.probability / 100))}</td>
                   <td className="num">{fullAmount(p.cost)}</td>
                   <td className="num">{p.margin_pct === null ? "—" : `${p.margin_pct}%`}</td>
                   <td>{date(p.expected_close_date)}</td>
                   <td>{p.project_status || "—"}</td>
                   <td>{p.realized_work || "—"}</td>
                   <td>{p.period_plan || "—"}</td>
+                  <td className="num">{fullAmount(p.profit ?? "0")}</td>
+                  <td><button className="btn small" onClick={(e) => { e.stopPropagation(); setPrintProject(p); }}>Лист проекта</button></td>
                 </tr>
               ))}
               {!projectsQuery.error && data && data.items.length === 0 && (

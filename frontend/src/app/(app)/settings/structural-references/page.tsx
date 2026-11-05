@@ -11,8 +11,8 @@ type Category = "segments" | "services";
 
 export default function StructuralReferences() {
   const me = useMe();
-  if (!me.data) return <div className="page-body"><QueryState query={me} title="Не удалось проверить права доступа" /></div>;
-  if (me.data.role !== "admin") return <div className="page-body"><h1>Сегменты и услуги</h1>
+  if (!me.data) return <div className="page-body reference-page"><QueryState query={me} title="Не удалось проверить права доступа" /></div>;
+  if (me.data.role !== "admin") return <div className="page-body reference-page"><h1>Сегменты и услуги</h1>
     <p className="alert" role="alert">Раздел доступен только администратору.</p></div>;
   return <AdminItems />;
 }
@@ -39,14 +39,14 @@ function AdminItems() {
       await Promise.all([client.invalidateQueries({ queryKey: ["structural-references"] }), client.invalidateQueries({ queryKey: ["refs"] })]);
     },
   });
-  return <><div className="page-header"><h1>Сегменты и услуги</h1></div><div className="page-body">
+  return <><div className="page-header"><h1>Сегменты и услуги</h1></div><div className="page-body reference-page">
     <p>Неактивные значения сохраняются в существующих записях и фильтрах.</p>
     <label htmlFor="structural-category">Справочник</label>{" "}
     <select id="structural-category" className="select" value={category} disabled={mutation.isPending}
       onChange={(e) => { setCategory(e.target.value as Category); setName(""); setGroup(""); mutation.reset(); setSuccess(""); }}>
       <option value="segments">Сегменты</option><option value="services">Услуги</option>
     </select>
-    <div style={{ margin: "16px 0" }}><label htmlFor="structural-name">Новое значение</label>{" "}
+    <div className="reference-create" style={{ margin: "16px 0" }}><label htmlFor="structural-name">Новое значение</label>{" "}
       <input id="structural-name" className="input" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />{" "}
       {category === "services" && <><label htmlFor="structural-group">Группа услуги (необязательно)</label>{" "}
         <input id="structural-group" className="input" value={group} maxLength={100} onChange={(e) => setGroup(e.target.value)} />{" "}</>}

@@ -70,7 +70,15 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   const [hostRef, size] = useSize<HTMLDivElement>();
 
   const editable = dashboard.editable;
-  const rowHeight = Math.max(32, (size.height - MARGIN * (ROWS + 1)) / ROWS);
+  const compact = size.width < 700;
+  const rowHeight = compact ? 48 : Math.max(32, (size.height - MARGIN * (ROWS + 1)) / ROWS);
+  const layout: Layout[] = compact
+    ? [...widgets].sort((a, b) => a.y - b.y || a.x - b.x).reduce<Layout[]>((items, w) => {
+      const previous = items.at(-1);
+      items.push({ i: w.id, x: 0, y: previous ? previous.y + previous.h : 0, w: 12, h: w.type === "kpi" ? 3 : 8 });
+      return items;
+    }, [])
+    : widgets.map((w) => ({ i: w.id, x: w.x, y: w.y, w: w.w, h: w.h, minW: 2, minH: 2 }));
 
   // Обновляем чистый редактор, не затирая несохранённые правки при refetch.
   useEffect(() => {
@@ -95,7 +103,8 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
   };
 
   const onLayoutChange = (layout: Layout[]) => {
-    if (!editable) return;
+    // Узкий экран меняет только отображение, а не сохранённую раскладку.
+    if (!editable || compact) return;
     const byId = new Map(layout.map((l) => [l.i, l]));
     const moved = widgets.some((w) => {
       const l = byId.get(w.id);
@@ -157,7 +166,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
     <>
       <div className="page-header">
         {editable ? (
-          <div>
+          <div className="dashboard-heading">
             <input
               className="input"
               style={{ maxWidth: 280, fontWeight: 600, fontSize: 16 }}
@@ -168,7 +177,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
                 setDirty(true);
               }}
             />
-            <span className="muted" style={{ fontSize: 13, marginLeft: 8 }}>Автор: {dashboard.owner.full_name}</span>
+            <span className="muted">Автор: {dashboard.owner.full_name}</span>
           </div>
         ) : (
           <h1>
@@ -245,9 +254,9 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
               cols={12}
               rowHeight={rowHeight}
               margin={[MARGIN, MARGIN]}
-              layout={widgets.map((w) => ({ i: w.id, x: w.x, y: w.y, w: w.w, h: w.h, minW: 2, minH: 2 }))}
-              isDraggable={editable}
-              isResizable={editable}
+              layout={layout}
+              isDraggable={editable && !compact}
+              isResizable={editable && !compact}
               draggableHandle=".widget-drag"
               onLayoutChange={onLayoutChange}
               compactType="vertical"

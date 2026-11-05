@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { emptyPipeline } from "./pipeline-mocks";
 
 const ASCII_EMAILS = [
   "sales&support@example.test",
@@ -51,6 +52,7 @@ test("F4: после второго фактора вход открывает �
   const queries: URLSearchParams[] = [];
   const unexpected: string[] = [];
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const url = new URL(request.url());
     if (request.method() === "POST" && url.pathname === "/api/auth/login") {

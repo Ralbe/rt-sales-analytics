@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import type { ClientItem, FinancialEntry, Project, Refs, User } from "../../src/lib/types";
@@ -88,6 +89,7 @@ async function mockApi(page: Page, editing = false, options: {
     unexpected: [] as string[],
   };
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname.replace(/^\/api/, "");
@@ -170,7 +172,7 @@ async function mockApi(page: Page, editing = false, options: {
 }
 
 function financialRow(page: Page, index: number) {
-  return page.getByRole("group", { name: "Помесячная выручка и затраты" }).locator(".row2").nth(index);
+  return page.getByRole("group", { name: "Помесячная выручка и затраты" }).locator(".financial-entry").nth(index);
 }
 
 async function fillFinancialRow(row: Locator, entry: FinancialWrite) {

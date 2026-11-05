@@ -63,6 +63,10 @@ export interface Project {
   amount: string;
   cost: string;
   margin: string;
+  revenue?: string;
+  financial_costs?: string;
+  profit?: string;
+  last_revenue_month?: string | null;
   margin_pct: number | null;
   probability: number;
   start_date: string;
@@ -126,7 +130,7 @@ export interface KpiItem {
 }
 
 export interface AnalyticsScope {
-  stage_scope?: "legacy";
+  stage_scope?: "legacy" | "all";
   scope_note?: string;
 }
 
@@ -149,7 +153,7 @@ export interface BreakdownResponse extends AnalyticsScope {
   items: { key: string; label: string; value: number }[];
 }
 
-export type WidgetType = "kpi" | "trend" | "breakdown" | "projects";
+export type WidgetType = "kpi" | "trend" | "breakdown" | "projects" | "profit" | "failures";
 export type ChartKind = "bar" | "hbar" | "donut" | "pie" | "line" | "table";
 
 export interface WidgetConfig {
@@ -157,6 +161,8 @@ export interface WidgetConfig {
   group_by?: GroupBy;
   chart?: ChartKind;
   weeks?: number;
+  year?: number;
+  months?: number[];
   horizon?: number;
   limit?: number;
 }
@@ -187,4 +193,70 @@ export interface Dashboard {
   is_shared: boolean;
   editable: boolean;
   updated_at: string;
+}
+
+export interface PipelineGroup {
+  key: string;
+  label: string;
+  count: number;
+  amount: number;
+  weighted_amount: number;
+}
+
+export interface PipelineStage extends PipelineGroup {
+  probability: number | null;
+  avg_days: number | null;
+  median_days?: number | null;
+  mode_days?: number[];
+  visits?: number;
+}
+
+export interface PipelineResponse {
+  as_of: string;
+  totals: { count: number; amount: number; weighted_amount: number; revenue: number; weighted_revenue: number };
+  by_stage: PipelineStage[];
+  by_manager: PipelineGroup[];
+  by_segment: PipelineGroup[];
+  by_service: PipelineGroup[];
+}
+
+export type ChangeIndicator =
+  | "new" | "removed" | "stage_up" | "stage_down" | "revenue_up" | "revenue_down" | "industry" | "implemented";
+
+export interface PeriodChangesResponse {
+  date_from: string;
+  date_to: string;
+  labels: Record<ChangeIndicator, string>;
+  counts: Record<ChangeIndicator, number>;
+  items: { project_id: number; indicators: ChangeIndicator[] }[];
+}
+
+export interface ProfitRow {
+  key: string;
+  label: string;
+  count: number;
+  revenue: number;
+  costs: number;
+  profit: number;
+  margin_pct: number | null;
+}
+
+export interface ProfitResponse {
+  groups: ProfitRow[];
+  total: ProfitRow;
+  items: { project_id: number; name: string; client: string; stage: string; status: string;
+    revenue: number; costs: number; profit: number; margin_pct: number | null }[];
+}
+
+export interface FailureGroup { label: string; count: number; amount: number }
+
+export interface FailuresResponse {
+  total: number;
+  by_reason: (FailureGroup & { key: string })[];
+  by_stage: FailureGroup[];
+  by_segment: FailureGroup[];
+  by_manager: FailureGroup[];
+  items: { project_id: number; name: string; client: string; reason: string; reason_label: string; stage: string;
+    segment: string; manager: string; amount: number; days_on_stage: number | null; archived_at: string | null }[];
+  stall_rule: string;
 }

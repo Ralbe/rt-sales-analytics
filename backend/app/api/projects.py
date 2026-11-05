@@ -32,7 +32,7 @@ from app.models import (
 )
 from app.project_write_schemas import ProjectSaveIn
 from app.schemas import (
-    LEGACY_STAGE_SCOPE_NOTE,
+    GanttOut,
     NameCheckOut,
     ProjectFinancialEntryIn,
     ProjectFinancialEntryOut,
@@ -40,7 +40,7 @@ from app.schemas import (
     ProjectOut,
     ProjectPage,
 )
-from app.services import audit
+from app.services import audit, pipeline
 from app.services.project_field_label_export import PROJECT_EXPORT_FIELDS, write_project_export_headers
 from app.services.project_field_labels import (
     effective_project_field_labels,
@@ -77,6 +77,9 @@ def _xlsx_timestamp(value: datetime) -> str:
 
 def to_out(p: Project) -> dict:
     margin = p.amount - p.cost
+    revenue = sum((e.amount for e in p.financial_entries if e.kind == "revenue"), Decimal(0)) * 1000
+    costs = sum((e.amount for e in p.financial_entries if e.kind == "cost"), Decimal(0)) * 1000
+    months = [date(e.year, e.month, 1) for e in p.financial_entries if e.kind == "revenue" and e.amount > 0]
     return {
         "id": p.id,
         "name": p.name,
@@ -91,6 +94,8 @@ def to_out(p: Project) -> dict:
         "amount": p.amount,
         "cost": p.cost,
         "margin": margin,
+        "revenue": revenue, "financial_costs": costs, "profit": revenue - costs,
+        "last_revenue_month": max(months) if months else None,
         "margin_pct": round(float(margin / p.amount * 100), 1) if p.amount else None,
         "probability": p.probability,
         "start_date": p.start_date,
@@ -152,7 +157,10 @@ def _filtered_query(
     if implementation_year is not None:
         stmt = stmt.where(Project.implementation_year == implementation_year)
     if open_only:
-        stmt = stmt.where(Project.stage_scheme == "legacy", Project.stage.notin_(CLOSED_STAGES))
+        stmt = stmt.where(or_(
+            (Project.stage_scheme == "legacy") & Project.stage.notin_(CLOSED_STAGES),
+            (Project.stage_scheme == "customer") & Project.customer_stage.has(ReferenceValue.code != "success"),
+        ))
     return stmt
 
 
@@ -212,8 +220,8 @@ def list_projects(
     items = db.scalars(stmt.offset((page - 1) * size).limit(size)).unique().all()
     return {
         "items": [to_out(p) for p in items], "total": total, "page": page, "size": size,
-        "stage_scope": "legacy" if params.open_only else "all",
-        "scope_note": LEGACY_STAGE_SCOPE_NOTE if params.open_only else None,
+        "stage_scope": "all",
+        "scope_note": None,
     }
 
 
@@ -235,13 +243,12 @@ def export_projects(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(Role.analyst, Role.admin)),
 ) -> StreamingResponse:
-    projects = db.scalars(params.query(user).limit(EXPORT_LIMIT)).unique().all()
+    projects = db.scalars(params.query(user).limit(EXPORT_LIMIT + 1)).unique().all()
+    if len(projects) > EXPORT_LIMIT:
+        raise HTTPException(422, "В выборке больше 10 000 проектов. Уточните фильтры перед выгрузкой")
     wb = Workbook()
     ws = wb.active
-    ws.title = "Проекты (6 стадий)" if params.open_only else "Проекты"
-    if params.open_only:
-        wb.create_sheet("Область данных").append([LEGACY_STAGE_SCOPE_NOTE])
-        wb.properties.description = LEGACY_STAGE_SCOPE_NOTE
+    ws.title = "Проекты"
     write_project_export_headers(ws, effective_project_field_labels(db))
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -361,6 +368,38 @@ def restore_project(
 @router.get("/{project_id}", response_model=ProjectOut)
 def get_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     return to_out(_get_visible(db, project_id, user))
+
+
+@router.get("/{project_id}/gantt", response_model=GanttOut)
+def get_project_gantt(
+    project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> dict:
+    project = _get_visible(db, project_id, user)
+    return pipeline.gantt(db, project, date.today())
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.admin)),
+) -> None:
+    """Окончательно удаляет проект из архива. Журнал сохраняет снимок карточки и финансов."""
+    user = lock_actor(db, user, roles={Role.admin})
+    project = _get_visible(db, project_id, user, for_update=True)
+    if project.archived_at is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Сначала переместите проект в архив")
+    field_labels = effective_project_field_labels(db)
+    audit.record(
+        db, user.id, "delete", "project", project.id,
+        name=project.name,
+        before=project_snapshot(db, project, field_labels=field_labels),
+        financial_entries=[financial_snapshot(row, field_labels=field_labels) for row in project.financial_entries],
+        author_name=user.full_name,
+    )
+    db.delete(project)
+    db.commit()
+    cache.bump("analytics")
 
 
 @router.get("/{project_id}/history", response_model=ProjectHistoryPage)

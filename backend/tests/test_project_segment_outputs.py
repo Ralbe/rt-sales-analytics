@@ -139,19 +139,20 @@ def test_analytics_project_segments_fallback_legacy_scope_and_user_rbac(as_user,
     manager_id = projects[0].manager_id
     frame = load_frame(db, Filters(scope_manager_id=manager_id))
     ids = set(frame.id)
-    assert {p.id for p in projects[:3]} <= ids
-    assert projects[3].id not in ids and projects[4].id not in ids
+    # Проект на этапах заказчика входит в аналитику, чужой проект — нет.
+    assert {p.id for p in projects[:3]} | {projects[4].id} <= ids
+    assert projects[3].id not in ids
     assert dict(zip(frame.id, frame.segment_id, strict=True))[projects[2].id] == first.id
     selected = load_frame(db, Filters(segment_ids=(second.id,), scope_manager_id=manager_id))
-    assert projects[1].id in set(selected.id)
-    assert all(p.id not in set(selected.id) for p in (projects[0], projects[2], projects[3], projects[4]))
+    assert {projects[1].id, projects[4].id} <= set(selected.id)
+    assert all(p.id not in set(selected.id) for p in (projects[0], projects[2], projects[3]))
     items = breakdown(db, Filters(segment_ids=(first.id, second.id), scope_manager_id=manager_id),
                       date(2026, 10, 21), "segment", "projects")
-    assert {item["key"]: item["value"] for item in items["items"]} == {str(first.id): 2, str(second.id): 1}
+    assert {item["key"]: item["value"] for item in items["items"]} == {str(first.id): 2, str(second.id): 2}
     response = as_user.get("/api/analytics/breakdown", params={"segment_id": second.id, "as_of": "2026-10-21",
                                                              "group_by": "segment", "metric": "projects"})
     assert response.status_code == 200
-    assert response.json()["items"] == [{"key": str(second.id), "label": second.name, "value": 1.0}]
+    assert response.json()["items"] == [{"key": str(second.id), "label": second.name, "value": 2.0}]
 
 
 def test_report_query_respects_user_rbac(db, segment_projects):

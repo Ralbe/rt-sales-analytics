@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { FinancialEntry, Project, Refs, User } from "../../src/lib/types";
@@ -59,6 +60,7 @@ async function openProject(page: Page, options: { project?: Project; gate?: { so
     };
   }, { throwPrint: options.printError ?? false });
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/api/, "");
     state.requests.push(`${request.method()} ${path}`);
@@ -102,6 +104,47 @@ async function reconnect(page: Page) {
   await page.clock.fastForward(6 * 60_000);
   await page.evaluate(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
 }
+
+test("выбранные поля листа не включают ИНН и затраты при печати", async ({ page }) => {
+  await openProject(page, { project: { ...PROJECT, client_inn: "7707083893" } });
+  await page.getByText("Поля листа проекта", { exact: true }).click();
+  const fields = page.locator(".print-fields");
+  await fields.getByRole("checkbox", { name: "ИНН", exact: true }).uncheck();
+  await fields.getByRole("checkbox", { name: "Затраты", exact: true }).uncheck();
+  await preparePrint(page);
+  await expect(report(page).locator('[data-project-field="client_inn"]')).toHaveCount(0);
+  await expect(report(page).locator('[data-project-finance="cost"]')).toHaveCount(0);
+  await expect(report(page).locator('[data-project-finance="revenue"]')).toHaveCount(1);
+  await expect(field(page, "name")).toHaveText(PROJECT.name);
+});
+
+test("Гант: календарные границы совпадают с полосами и доступны четыре масштаба", async ({ page }) => {
+  await openProject(page);
+  await page.route("**/api/projects/41/gantt", (route) => route.fulfill({ json: {
+    stages: [{ label: "Согласование", start: "2026-02-01T00:00:00+03:00", end: "2026-03-01T00:00:00+03:00", duration_days: 28 }],
+    revenue: [{ year: 2026, month: 3, amount: 1250, vat_included: true, status: "Начислена" }], costs: [],
+  } }));
+  await page.reload();
+  const gantt = page.getByRole("region", { name: "Диаграмма Ганта", exact: true });
+  await expect(gantt.locator(".gantt-label").getByText("28 дн.", { exact: true })).toBeVisible();
+  const periods = gantt.locator(".gantt-period");
+  await expect(periods).toHaveCount(2);
+  const first = await periods.nth(0).boundingBox(), second = await periods.nth(1).boundingBox();
+  const stage = await gantt.locator(".gantt-stage").boundingBox(), revenue = await gantt.locator(".gantt-revenue").boundingBox();
+  expect(Math.abs(stage!.width - first!.width)).toBeLessThan(1);
+  expect(Math.abs(revenue!.x - second!.x)).toBeLessThan(1);
+  expect(first!.width / second!.width).toBeCloseTo(28 / 31, 2);
+  await gantt.getByLabel("Масштаб").selectOption("day");
+  await expect(periods).toHaveCount(59);
+  await gantt.getByLabel("Масштаб").selectOption("quarter");
+  await expect(periods).toHaveCount(1);
+  await gantt.getByLabel("Масштаб").selectOption("year");
+  await expect(periods).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gantt.getByLabel("Масштаб").selectOption("day");
+  expect(await gantt.locator(".gantt-scroll").evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
+  await gantt.screenshot({ path: "test-results/gantt-mobile.png" });
+});
 
 test("отзыв доступа к проекту после загрузки запрещает печать", async ({ page }) => {
   const state = await openProject(page);

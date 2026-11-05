@@ -9,10 +9,10 @@ import { SESSION_EXPIRED_EVENT, api } from "@/lib/api";
 import { useMe, useRefs } from "@/lib/hooks";
 import { resolveProjectFieldLabels } from "@/lib/project-field-labels";
 import { managerFilterOptions, segmentFilterOptions, serviceFilterOptions } from "@/lib/reference-options";
-import type { BreakdownResponse, Dashboard, DashboardFilters, KpiResponse, ProjectPage, Refs, TrendResponse, User, Widget, WidgetType } from "@/lib/types";
+import type { BreakdownResponse, Dashboard, DashboardFilters, FailuresResponse, KpiResponse, ProfitResponse, ProjectPage, Refs, TrendResponse, User, Widget, WidgetType } from "@/lib/types";
 
 import { widgetQueryKey } from "./widget-data";
-import { BreakdownView, KpiView, ProjectsView, TrendView, type ProjectsViewLabels } from "./widgets";
+import { BreakdownView, FailuresView, KpiView, ProfitView, ProjectsView, TrendView, type ProjectsViewLabels } from "./widgets";
 
 interface Props {
   id: number;
@@ -21,7 +21,10 @@ interface Props {
   filters: DashboardFilters;
 }
 
-type Responses = { kpi: KpiResponse; trend: TrendResponse; breakdown: BreakdownResponse; projects: ProjectPage };
+type Responses = {
+  kpi: KpiResponse; trend: TrendResponse; breakdown: BreakdownResponse; projects: ProjectPage;
+  profit: ProfitResponse; failures: FailuresResponse;
+};
 type WidgetSnapshot = { [K in WidgetType]: { type: K; widget: Widget; data: Responses[K]; loadedAt: string } }[WidgetType];
 interface Snapshot {
   name: string;
@@ -188,7 +191,7 @@ export function DashboardPrint({ id, name, widgets, filters }: Props) {
   }, [snapshot, phase]);
 
   useEffect(() => {
-    if (phase !== "ready" || !snapshot) return;
+    if (phase !== "ready" || !snapshot || printStarted.current) return;
     // Два кадра дают браузеру завершить разметку перед открытием диалога.
     let second = 0;
     const first = requestAnimationFrame(() => {
@@ -279,7 +282,7 @@ export function DashboardPrint({ id, name, widgets, filters }: Props) {
           PDF / Печать
         </button>
         <span id="dashboard-print-hint" className="muted" role="status">
-          {error ?? (phase === "checking" || phase === "preparing" ? "Готовим печатный снимок…" : phase === "ready" ? "Закройте диалог печати, чтобы продолжить." : reason ?? "В диалоге печати выберите «Сохранить как PDF», формат A4.")}
+          {error ?? (phase === "checking" || phase === "preparing" ? "Готовим печатный снимок…" : phase === "ready" ? "Закройте диалог печати, чтобы продолжить." : reason)}
         </span>
       </div>
       {target && createPortal(
@@ -316,8 +319,7 @@ function PrintableWidget({ item, projectLabels, refs }: { item: WidgetSnapshot; 
         <h2>{widget.title}</h2>
         <p>Данные загружены: {item.loadedAt}</p>
         {item.type === "trend" && <p>
-          История: {widget.config.weeks ?? 6} нед. ({range(item.data.history)}).<br />
-          Горизонт прогноза: {widget.config.horizon ?? 14} дн. ({range(item.data.forecast)}).
+          Период: {widget.config.year ?? new Date().getFullYear()} год ({range(item.data.history)}).
         </p>}
         {item.type === "kpi" && <p>На дату: {date(item.data.as_of)}. Сравнение: {date(item.data.previous_as_of)}.</p>}
         {item.type === "projects" && <p>Открытые проекты по убыванию суммы. Показано: {item.data.items.length}, всего: {item.data.total}, лимит: {widget.config.limit ?? 8}.</p>}
@@ -327,6 +329,8 @@ function PrintableWidget({ item, projectLabels, refs }: { item: WidgetSnapshot; 
       {item.type === "trend" && <TrendView widget={widget} data={item.data} printable />}
       {item.type === "breakdown" && <BreakdownView widget={widget} data={item.data} printable refs={refs} />}
       {item.type === "projects" && <ProjectsView data={item.data} labels={projectLabels} printable refs={refs} />}
+      {item.type === "profit" && <ProfitView data={item.data} printable />}
+      {item.type === "failures" && <FailuresView data={item.data} printable />}
     </article>
   );
 }

@@ -6,7 +6,8 @@ import { createPortal } from "react-dom";
 import { QueryState } from "@/components/QueryState";
 import { useMe } from "@/lib/hooks";
 import { downloadSnapshot, reportError, reports, type SnapshotPage } from "@/lib/report-api";
-import { SESSION_EXPIRED_EVENT } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { SESSION_EXPIRED_EVENT, post } from "@/lib/api";
 
 function cell(value: unknown): string { return value === null || value === undefined ? "—" : typeof value === "boolean" ? (value ? "Да" : "Нет") : String(value); }
 const operators: Record<string, string> = { eq: "равно", ne: "не равно", contains: "содержит", lt: "меньше", lte: "не больше", gt: "больше", gte: "не меньше" };
@@ -18,7 +19,8 @@ function filterText(filter: NonNullable<SnapshotPage["metadata"]>["filters"][num
 function ReportTable({ page, rows }: { page: SnapshotPage; rows: Record<string, unknown>[] }) {
   return <table className="report-table"><thead><tr>{page.columns.map((c) => <th key={c.id} scope="col">{c.label}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={i}>{page.columns.map((c) => <td key={c.id}>{cell(row[c.id])}</td>)}</tr>)}</tbody></table>;
 }
-export function SnapshotViewer({ id }: { id: string }) {
+export function SnapshotViewer({ id, archived = false }: { id: string; archived?: boolean }) {
+  const router = useRouter();
   const { data: me } = useMe();
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState("");
@@ -27,7 +29,7 @@ export function SnapshotViewer({ id }: { id: string }) {
   const generation = useRef(0);
   const surface = useRef<HTMLDivElement>(null);
   const printAuthorized = useRef(false);
-  const query = useQuery({ queryKey: ["report-snapshot", id, offset], queryFn: () => reports.page(id, offset), retry: false, staleTime: 0, refetchOnMount: "always" });
+  const query = useQuery({ queryKey: ["report-snapshot", id, offset, archived], queryFn: () => reports.page(id, offset, 100, archived), retry: false, staleTime: 0, refetchOnMount: "always" });
   const page = !query.isFetching && !query.error && !query.isPaused ? query.data : undefined;
   useEffect(() => {
     if (query.error) { generation.current++; printAuthorized.current = false; surface.current?.setAttribute("data-ready", "false"); setPrintData(undefined); setBusy(false); }
@@ -46,7 +48,7 @@ export function SnapshotViewer({ id }: { id: string }) {
     let cancelled = false;
     void (async () => {
       try {
-        const check = await reports.page(id, 0, 1);
+        const check = await reports.page(id, 0, 1, archived);
         if (cancelled || request !== generation.current) return;
         if (check.snapshot_id !== id || check.offset !== 0 || check.total !== printData.page.total ||
             check.title !== printData.page.title || JSON.stringify(check.columns) !== JSON.stringify(printData.page.columns) ||
@@ -68,20 +70,20 @@ export function SnapshotViewer({ id }: { id: string }) {
       } finally { if (!cancelled && request === generation.current) setBusy(false); }
     })();
     return () => { cancelled = true; };
-  }, [id, printData]);
+  }, [id, printData, archived]);
   useEffect(() => { const after = () => { setPrintData(undefined); setBusy(false); }; window.addEventListener("afterprint", after); return () => window.removeEventListener("afterprint", after); }, []);
-  const download = async () => { setError(""); setBusy(true); try { await downloadSnapshot(id); } catch (e) { setError(reportError(e)); } finally { setBusy(false); } };
+  const download = async () => { setError(""); setBusy(true); try { await downloadSnapshot(id, archived); } catch (e) { setError(reportError(e)); } finally { setBusy(false); } };
   const print = async () => {
     setError(""); setBusy(true); setPrintData(undefined);
     const request = ++generation.current;
     let prepared = false;
     try {
-      const first = await reports.page(id, 0, 200);
+      const first = await reports.page(id, 0, 200, archived);
       if (first.snapshot_id !== id || first.offset !== 0 || first.total > 10000 || first.total < 0 || first.rows.length !== Math.min(200, first.total)) throw new Error("Некорректный размер снимка");
       const rows: Record<string, unknown>[] = [];
       const expectedColumns = JSON.stringify(first.columns);
       for (let position = 0; position < first.total; position += 200) {
-        const part = position === 0 ? first : await reports.page(id, position, 200);
+        const part = position === 0 ? first : await reports.page(id, position, 200, archived);
         if (request !== generation.current || part.snapshot_id !== id || part.total !== first.total || part.title !== first.title || part.offset !== position || JSON.stringify(part.columns) !== expectedColumns || JSON.stringify(part.metadata) !== JSON.stringify(first.metadata) || part.rows.length !== Math.min(200, first.total - position)) throw new Error("Снимок получен не полностью");
         rows.push(...part.rows);
       }
@@ -94,8 +96,13 @@ export function SnapshotViewer({ id }: { id: string }) {
     {query.error && <p>Снимок может быть недоступен или срок его действия истёк. Запустите отчёт снова.</p>}
     {page && !query.error && <>
       <h2>{page.title || "Предпросмотр отчёта"}</h2>
-      <p role="status">Всего строк: {page.total}. Снимок доступен до {new Date(page.expires_at).toLocaleString("ru-RU")}.</p>
-      <div className="report-actions">{(me?.role === "analyst" || me?.role === "admin") && <button className="btn" disabled={busy} onClick={download}>Скачать XLSX</button>}<button className="btn" disabled={busy} onClick={print}>{busy ? "Подготовка…" : "PDF / Печать всех строк"}</button></div>
+      <p role="status">Всего строк: {page.total}. {page.expires_at ? `Снимок доступен до ${new Date(page.expires_at).toLocaleString("ru-RU")}.` : "Сохранённая версия."}</p>
+      <div className="report-actions">{!archived && (me?.role === "analyst" || me?.role === "admin") && <button className="btn" disabled={busy} onClick={async () => {
+        setBusy(true); setError("");
+        try { const saved = await post<{ id: string }>("/report-archives", { snapshot_id: id }); router.push(`/reports/archive/${saved.id}`); }
+        catch (e) { setError(reportError(e)); }
+        finally { setBusy(false); }
+      }}>Сохранить версию</button>}{(me?.role === "analyst" || me?.role === "admin") && <button className="btn" disabled={busy} onClick={download}>Скачать XLSX</button>}<button className="btn" disabled={busy} onClick={print}>{busy ? "Подготовка…" : "PDF / Печать всех строк"}</button></div>
       {error && <div role="alert" className="alert">{error}</div>}
       {page.total === 0 ? <p>По выбранным условиям ничего не найдено.</p> : <><div className="report-table-scroll"><ReportTable page={page} rows={page.rows} /></div><div className="report-actions"><button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 100))}>Предыдущая страница</button><span>Строки {offset + 1}–{offset + page.rows.length} из {page.total}</span><button className="btn" disabled={offset + page.rows.length >= page.total} onClick={() => setOffset(offset + 100)}>Следующая страница</button></div></>}
     </>}

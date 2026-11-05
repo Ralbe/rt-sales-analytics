@@ -127,10 +127,10 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     const topResponse = await page.request.get(`/api/projects?manager_id=${created.id}&open_only=true`);
     expect(topResponse.status()).toBe(200);
     const top = await topResponse.json();
-    expect(top.stage_scope).toBe("legacy");
-    expect(top.scope_note).toBe("Показатели рассчитаны только по проектам с прежними шестью стадиями. Проекты с новыми этапами не включены.");
-    expect(top.items).toEqual([]);
-    expect(top.total).toBe(0);
+    expect(top.stage_scope).toBe("all");
+    expect(top.scope_note).toBeNull();
+    expect(top.items).toContainEqual(expect.objectContaining({ id: project.id }));
+    expect(top.total).toBe(1);
 
     const reportResponse = await page.request.post("/api/dashboards", { data: {
       name: `Отчёт приёмки ${suffix}`, is_shared: false,
@@ -145,8 +145,10 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     await page.goto(`/dashboards/${report.id}`);
     await expect(page.getByRole("button", { name: "PDF / Печать" })).toBeEnabled();
     const liveProjects = page.locator(".widget").filter({ hasText: "Проекты приёмки" });
-    await expect(liveProjects.locator("[data-stage-scope]")).toHaveText(top.scope_note);
-    await expect(liveProjects.locator("tbody tr")).toHaveCount(0);
+    await expect(liveProjects.locator("[data-stage-scope]")).toHaveCount(0);
+    await expect(liveProjects.locator("tbody tr")).toHaveCount(1);
+    await expect(liveProjects.locator("tbody tr")).toContainText(project.name);
+    await expect(liveProjects.locator("tbody td")).toHaveCount(6);
     await page.evaluate(() => {
       (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted = false;
       window.print = () => { (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted = true; };
@@ -154,9 +156,9 @@ test("приёмка MVP: пользователи, 2FA, проект, фина�
     await page.getByRole("button", { name: "PDF / Печать" }).click();
     await expect.poll(() => page.evaluate(() => (window as typeof window & { acceptancePrinted: boolean }).acceptancePrinted)).toBe(true);
     const surface = page.locator("[data-dashboard-print]");
-    await expect(surface).not.toContainText(project.name);
-    await expect(surface.locator('[data-widget-id="projects"] [data-stage-scope]')).toHaveText(top.scope_note);
-    await expect(surface.locator('[data-widget-id="count"] [data-stage-scope]')).toHaveText(top.scope_note);
+    await expect(surface).toContainText(project.name);
+    await expect(surface.locator('[data-widget-id="projects"] [data-stage-scope]')).toHaveCount(0);
+    await expect(surface.locator('[data-widget-id="count"] [data-stage-scope]')).toHaveCount(0);
     await expect(surface).toContainText(newName);
     await expect(surface).toContainText(project.segment.name);
     await page.emulateMedia({ media: "print" });

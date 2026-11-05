@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { Role } from "../../src/lib/types";
@@ -5,6 +6,7 @@ import type { Role } from "../../src/lib/types";
 async function mockLabels(page: Page, role: Role = "admin") {
   const state = { label: "Название проекта", refsRequests: 0, writes: [] as unknown[], failSave: false };
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === "/api/auth/me") return route.fulfill({ json: { id: 1, full_name: "Тест", email: "test@example.test", role } });

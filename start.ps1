@@ -1,37 +1,16 @@
-# Starts the whole project: Docker Desktop (if needed) + docker compose.
-# Docker Desktop on this machine crashes on start because it cannot remove stale
-# unix-socket files left by a previous run (Windows reports "The file cannot be
-# accessed by the system"). WSL can delete them, so we clean them before starting.
-#
-# Usage:  powershell -ExecutionPolicy Bypass -File .\start.ps1
+# Запуск проекта после установки и запуска Docker Desktop.
 param([switch]$Detach)
 
 Set-Location $PSScriptRoot
-
-function Test-Docker {
-    docker info *> $null
-    return $LASTEXITCODE -eq 0
+$ErrorActionPreference = 'Stop'
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Host 'Install Docker Desktop, start it and run this script again.' -ForegroundColor Yellow
+    exit 1
 }
-
-if (-not (Test-Docker)) {
-    Write-Host "Docker is not running. Cleaning stale sockets and starting Docker Desktop..." -ForegroundColor Yellow
-    Get-Process "Docker Desktop", "com.docker.backend", "com.docker.build" -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
-
-    $local = "/mnt/c" + ($env:LOCALAPPDATA.Substring(2) -replace '\\', '/')
-    wsl.exe -u root -- sh -c "rm -f '$local/Docker/run/'* '$local/docker-secrets-engine/engine.sock'"
-
-    Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-    $deadline = (Get-Date).AddMinutes(3)
-    while (-not (Test-Docker)) {
-        if ((Get-Date) -gt $deadline) {
-            Write-Host "Docker did not start in 3 minutes. Check the Docker Desktop window." -ForegroundColor Red
-            exit 1
-        }
-        Start-Sleep -Seconds 3
-    }
-    Write-Host "Docker is ready." -ForegroundColor Green
+docker info *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Start Docker Desktop, wait until it is ready and run this script again.' -ForegroundColor Yellow
+    exit 1
 }
 
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
@@ -45,3 +24,4 @@ if ($Detach) {
 } else {
     docker compose up --build
 }
+exit $LASTEXITCODE

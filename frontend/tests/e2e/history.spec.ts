@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { emptyPipeline } from "./pipeline-mocks";
 
 import type { ProjectHistoryItem } from "../../src/lib/history-types";
 import type { FinancialEntry, Project, Refs } from "../../src/lib/types";
@@ -38,6 +39,7 @@ function historyItem(id: number, changes: ProjectHistoryItem["changes"] = []): P
 async function mockApi(page: Page, initial: ProjectHistoryItem[] = [], onHistory?: (route: Route) => Promise<void>) {
   const state = { project: projectFixture(), history: [...initial], historyRequests: 0, saveStatus: 200, saves: 0, unexpected: [] as string[] };
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const url = new URL(route.request().url());
     const path = url.pathname;
     if (path === "/api/auth/me") return route.fulfill({ json: { ...author, email: "test@example.com", role: "user" } });

@@ -1,3 +1,4 @@
+import { emptyPipeline } from "./pipeline-mocks";
 import { expect, test, type Page } from "@playwright/test";
 import type { Project, Refs, Role, Widget } from "../../src/lib/types";
 
@@ -33,6 +34,7 @@ async function setup(page: Page, role: Role, legacy = false) {
     is_shared: true, editable: role !== "user", updated_at: "2026-10-24T10:00:00Z" };
   await page.addInitScript(() => { window.print = () => {}; });
   await page.route("**/api/**", async (route) => {
+    if (await emptyPipeline(route)) return;
     const req = route.request(); const url = new URL(req.url()); requests.push(url);
     if (url.pathname === "/api/auth/me") return route.fulfill({ json: { ...active, email: "test@example.test", role } });
     if (url.pathname === "/api/refs") return route.fulfill({ json: currentRefs });

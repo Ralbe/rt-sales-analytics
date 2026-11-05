@@ -2,16 +2,28 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core import cache
 from app.db import get_db
 from app.deps import get_current_user, manager_scope
-from app.models import User
-from app.schemas import BreakdownOut, GroupBy, KpiKey, KpiOut, TrendMetric, TrendOut
-from app.services import analytics
+from app.models import Role, User
+from app.schemas import (
+    BreakdownOut,
+    FailuresOut,
+    GroupBy,
+    KpiKey,
+    KpiOut,
+    PeriodChangesOut,
+    PipelineOut,
+    ProfitOut,
+    TrendMetric,
+    TrendOut,
+)
+from app.services import analytics, outcomes, pipeline
 from app.services.analytics import Filters
+from app.services.pipeline import PipelineFilters
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -27,6 +39,7 @@ def get_filters(
         service_ids=tuple(sorted(service_id)),
         manager_ids=tuple(sorted(manager_id)),
         scope_manager_id=manager_scope(user),
+        can_view_archive=user.role == Role.admin,
     )
 
 
@@ -78,3 +91,92 @@ def breakdown(
         "breakdown", f, lambda: analytics.breakdown(db, f, d, group_by, metric),
         as_of=d, group_by=group_by, metric=metric,
     )
+
+
+def get_pipeline_filters(
+    segment_id: list[int] = Query(default=[]),
+    service_id: list[int] = Query(default=[]),
+    manager_id: list[int] = Query(default=[]),
+    customer_stage_id: list[int] = Query(default=[]),
+    stage: list[str] = Query(default=[]),
+    implementation_year: int | None = Query(default=None, ge=1900, le=2200),
+    q: str = Query(default="", max_length=100),
+    open_only: bool = False,
+    archived: bool = False,
+    user: User = Depends(get_current_user),
+) -> PipelineFilters:
+    if archived and user.role != Role.admin:
+        raise HTTPException(403, "Архив доступен только администратору")
+    return PipelineFilters(
+        q=q, open_only=open_only, archived=archived, stages=tuple(sorted(stage)),
+        segment_ids=tuple(sorted(segment_id)),
+        service_ids=tuple(sorted(service_id)),
+        manager_ids=tuple(sorted(manager_id)),
+        customer_stage_ids=tuple(sorted(customer_stage_id)),
+        implementation_year=implementation_year,
+        scope_manager_id=manager_scope(user),
+        can_view_archive=user.role == Role.admin,
+    )
+
+
+@router.get("/pipeline", response_model=PipelineOut)
+def pipeline_summary(
+    as_of: date | None = None,
+    f: PipelineFilters = Depends(get_pipeline_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    d = as_of or date.today()
+    key = cache.make_key("analytics", fn="pipeline", filters=f, as_of=d)
+    result = cache.get_json(key)
+    if result is None:
+        result = pipeline.summary(db, f, d)
+        cache.set_json(key, result)
+    return result
+
+
+@router.get("/changes", response_model=PeriodChangesOut)
+def period_changes(
+    date_from: date,
+    date_to: date,
+    f: PipelineFilters = Depends(get_pipeline_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    if date_from > date_to:
+        raise HTTPException(422, {"field": "date_from", "message": "Начало периода позже конца"})
+    return pipeline.period_changes(db, f, date_from, date_to)
+
+
+@router.get("/profit", response_model=ProfitOut)
+def project_profit(
+    limit: int = Query(default=10, ge=1, le=50),
+    f: Filters = Depends(get_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Прибыль по проектам: выручка минус затраты по месячным строкам."""
+    return outcomes.profit(db, f, limit)
+
+
+@router.get("/failures", response_model=FailuresOut)
+def project_failures(
+    limit: int = Query(default=20, ge=1, le=100),
+    as_of: date | None = None,
+    f: Filters = Depends(get_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Невыполненные проекты и их причины."""
+    return outcomes.failures(db, f, as_of or date.today(), limit)
+
+
+@router.get("/trend-monthly", response_model=TrendOut)
+def trend_monthly(
+    year: int = Query(ge=1900, le=2200),
+    months: list[int] = Query(default=list(range(1, 13))),
+    metric: TrendMetric = "funnel",
+    f: Filters = Depends(get_filters),
+    db: Session = Depends(get_db),
+) -> Any:
+    if not months or len(months) > 12 or any(m < 1 or m > 12 for m in months):
+        raise HTTPException(422, "Укажите месяцы от 1 до 12")
+    d = date.today()
+    return cached("trend_monthly", f, lambda: analytics.monthly_trend(db, f, year, months, metric, d),
+                  year=year, months=sorted(set(months)), metric=metric, as_of=d)

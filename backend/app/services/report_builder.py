@@ -119,6 +119,17 @@ for name, kind, label in [
     )
     register("project." + name, getattr(Project, name), kind, label, label_key)
 
+# Коррелированные суммы не умножаются при выборе финансовых строк отчёта.
+def financial_total(kind):
+    return select(func.coalesce(func.sum(Finance.amount), 0) * 1000).where(
+        Finance.project_id == Project.id, Finance.kind == kind,
+    ).correlate(Project).scalar_subquery()
+
+
+register("project.revenue", financial_total("revenue"), "decimal", "Выручка, ₽")
+register("project.financial_costs", financial_total("cost"), "decimal", "Затраты, ₽")
+register("project.profit", financial_total("revenue") - financial_total("cost"), "decimal", "Прибыль, ₽")
+
 for key, expr, kind, label, label_key in [
     ("client.id", Client.id, "integer", "ID клиента", None),
     ("client.name", Client.name, "string", "Клиент", "client_id"),

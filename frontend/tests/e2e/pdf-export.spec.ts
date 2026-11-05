@@ -69,7 +69,7 @@ async function openDashboard(page: Page, options: {
         as_of: "2026-10-24", previous_as_of: "2025-10-24",
         items: [{ key: "funnel", title: "Объём воронки", unit: "rub", value: 1250000, previous: 1000000, delta_pct: 25 }],
       } }); break;
-      case "/api/analytics/trend":
+      case "/api/analytics/trend-monthly":
         await options.trendGate;
         await route.fulfill(options.trendError ? { status: 500, json: { detail: "Ошибка аналитики" } } : { json: {
           ...options.scope?.(),
@@ -103,6 +103,39 @@ async function preparePrint(page: Page) {
   expect(await page.evaluate(() => (window as typeof window & { printReady: string }).printReady)).toBe("true");
   return page.locator("[data-dashboard-print]");
 }
+
+test("узкий экран располагает виджеты последовательно и сохраняет исходную раскладку", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openDashboard(page);
+  const save = page.getByRole("button", { name: "Сохранить", exact: true });
+  await expect(save).toBeDisabled();
+  await page.setViewportSize({ width: 390, height: 1000 });
+  const cards = page.locator(".grid-host .react-grid-item");
+  await expect(cards).toHaveCount(widgets.length);
+  await expect.poll(async () => cards.evaluateAll((items) => {
+    const boxes = items.map((item) => item.getBoundingClientRect()).sort((a, b) => a.top - b.top);
+    return boxes.every((box, index) => box.width > 320 && (!index || box.top >= boxes[index - 1].bottom));
+  })).toBe(true);
+  await expect(save).toBeDisabled();
+  const kpi = page.locator(".widget").filter({ hasText: "Объём воронки" });
+  const title = await kpi.locator(".widget-head").boundingBox();
+  const value = await kpi.locator(".kpi .value").boundingBox();
+  expect(value!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
+
+  let saved: Dashboard | undefined;
+  await page.route("**/api/dashboards/41", async (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    saved = { ...dashboard, ...route.request().postDataJSON() };
+    await route.fulfill({ json: saved });
+  });
+  await page.getByRole("textbox", { name: "Название дашборда" }).fill("Продажи за год");
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(saved?.widgets).toEqual(widgets);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect.poll(async () => (await cards.first().boundingBox())!.width).toBeGreaterThan(500);
+  await expect(save).toBeDisabled();
+});
 
 test("истечение сессии закрывает подготовленный печатный дашборд", async ({ page }) => {
   await openDashboard(page, { widgets: [widgets[0]] });
@@ -154,9 +187,11 @@ test("подписи виджета проектов обновляются из
   let labels = { name: "Инициатива", client_id: "Заказчик", manager_id: "Куратор", amount: "Договор" };
   const requests = await openDashboard(page, { widgets: [widgets[4]], refs: () => ({ ...refs, project_field_labels: labels }) });
   const liveHeaders = page.locator(".widget .widget-table thead th");
-  const firstHeaders = ["Инициатива", "Заказчик", "Куратор", "Договор, ₽"];
+  const firstHeaders = ["Заказчик", "Инициатива", "Этап", "Куратор", "Договор, ₽", "Последний месяц выручки"];
   await expect(liveHeaders).toHaveText(firstHeaders);
   const projectRow = page.locator(".widget .widget-table tbody tr").first();
+  await expect(projectRow.locator("td")).toHaveCount(6);
+  await expect(projectRow.locator("td").first()).toHaveText("ООО «Волгоградская промышленная компания»");
   await expect(projectRow).toContainText("Проект № 1 — модернизация региональной инфраструктуры связи");
   await expect(projectRow).toContainText("ООО «Волгоградская промышленная компания»");
   await expect(projectRow).toContainText(user.full_name);
@@ -174,7 +209,7 @@ test("подписи виджета проектов обновляются из
     window.dispatchEvent(new Event("online"));
   });
   await expect.poll(() => requests.filter((request) => request.path === "/api/refs").length).toBe(2);
-  const updatedHeaders = ["Инициатива обновлена", "Контрагент", "Ведущий проекта", "Стоимость договора, ₽"];
+  const updatedHeaders = ["Контрагент", "Инициатива обновлена", "Этап", "Ведущий проекта", "Стоимость договора, ₽", "Последний месяц выручки"];
   await expect(liveHeaders).toHaveText(updatedHeaders);
   await expect(report.locator('[data-widget-id="projects"] thead th')).toHaveText(firstHeaders);
   await expect(report.locator('[data-widget-id="projects"] tbody tr').first()).toContainText(user.full_name);
@@ -266,6 +301,7 @@ test("неподготовленные шрифты запрещают непо�
   await button.click();
   await expect(page.locator("#dashboard-print-hint")).toHaveText("Готовим печатный снимок…");
   await expect(button).toBeDisabled();
+  await expect(page.locator('[data-print-chart="ready"]')).toHaveCount(1);
   expect(await page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(0);
   await page.evaluate(() => {
     const now = Date.now;
@@ -288,8 +324,7 @@ test("снимок содержит текущие несохранённые н
   await trendCard.getByRole("button", { name: "Действия с виджетом" }).click();
   await page.getByRole("button", { name: "Настроить…", exact: true }).click();
   const modal = page.locator(".modal");
-  await modal.locator(".field").filter({ hasText: "Период истории" }).locator("select").selectOption("12");
-  await modal.locator(".field").filter({ hasText: "Горизонт прогноза" }).locator("select").selectOption("30");
+  await modal.getByLabel("Год", { exact: true }).fill("2026");
   await modal.locator(".field").filter({ hasText: "Заголовок" }).locator("input").fill("Текущая динамика");
   await modal.getByRole("button", { name: "Применить", exact: true }).click();
   await expect(page.getByRole("button", { name: "PDF / Печать" })).toBeEnabled();
@@ -300,12 +335,12 @@ test("снимок содержит текущие несохранённые н
   await expect(report.locator("dl")).toContainText("Сегменты:Крупный бизнес, Государственные заказчики");
   await expect(report.locator("dl")).toContainText("Услуги:Защищённый интернет");
   await expect(report.locator("dl")).toContainText("Менеджеры:Мария Продажина");
-  await expect(report).toContainText("История: 12 нед. (29.08.2026 — 24.10.2026)");
-  await expect(report).toContainText("Горизонт прогноза: 30 дн. (25.10.2026 — 14.11.2026)");
+  await expect(report).toContainText("Период: 2026 год");
+  await expect(report).not.toContainText("Горизонт прогноза");
   await expect(report.locator(".print-widget")).toHaveCount(5);
   expect(requests.slice(before).map((request) => request.path)).toEqual(expect.arrayContaining(["/api/dashboards/41", "/api/auth/me"]));
   expect(requests.every((request) => request.method === "GET")).toBeTruthy();
-  expect(requests.some((request) => request.path.includes("weeks=12&horizon=30"))).toBeTruthy();
+  expect(requests.some((request) => request.path.includes("year=2026"))).toBeTruthy();
   await page.getByLabel("Название дашборда").fill("Изменение после создания снимка");
   await expect(report.locator("h1")).toHaveText("Несохранённый отчёт — Кириллица");
   await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
@@ -410,12 +445,12 @@ test("серверный scope_note для трёх аналитик и top-пр
     scope: () => ({ stage_scope: "legacy", scope_note: scopeNote }),
   });
   const liveNotes = page.locator(".widget [data-stage-scope]");
-  await expect(liveNotes).toHaveCount(4);
+  await expect(liveNotes).toHaveCount(3);
   for (const note of await liveNotes.all()) await expect(note).toHaveText(original);
   const beforePrint = requests.length;
   const report = await preparePrint(page);
   const snapshotNotes = report.locator("[data-stage-scope]");
-  await expect(snapshotNotes).toHaveCount(4);
+  await expect(snapshotNotes).toHaveCount(3);
   for (const note of await snapshotNotes.all()) await expect(note).toHaveText(original);
   await page.emulateMedia({ media: "print" });
   const pdfPath = testInfo.outputPath("dashboard-legacy-scope.pdf");
@@ -435,6 +470,16 @@ test("серверный scope_note для трёх аналитик и top-пр
   await expect(report.locator("[data-stage-scope]")).toHaveCount(0);
   await page.getByRole("button", { name: "PDF / Печать", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as typeof window & { printCalls: number }).printCalls)).toBe(2);
-  await expect(report.locator("[data-stage-scope]")).toHaveCount(4);
+  await expect(report.locator("[data-stage-scope]")).toHaveCount(3);
   for (const note of await report.locator("[data-stage-scope]").all()) await expect(note).toHaveText(scopeNote);
+});
+
+for (const scale of ["90", "100", "115", "130"]) test(`масштаб ${scale}: приложение заполняет высоту окна`, async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript((value) => localStorage.setItem("rt-font-settings", JSON.stringify({family:"arial",scale:value})), scale);
+  await openDashboard(page, {widgets:[widgets[0]]});
+  await expect.poll(async () => page.locator(".app").evaluate((el) => Math.abs(el.getBoundingClientRect().height - innerHeight))).toBeLessThan(2);
+  await expect.poll(async () => page.locator("main").evaluate((el) => Math.abs(el.getBoundingClientRect().bottom - innerHeight))).toBeLessThan(2);
+  await expect(page.getByRole("button", {name:"Сохранить", exact:true})).toBeDisabled();
+  if (scale === "90") await page.screenshot({path:"test-results/dashboard-small.png"});
 });
