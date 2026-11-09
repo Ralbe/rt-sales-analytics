@@ -159,12 +159,14 @@ def export_projects(
 
 
 def _set_archived(db: Session, project_id: int, user: User, *, archived: bool) -> dict:
-    project = get_visible_project(db, project_id, user, for_update=True)
-    out = set_project_archived(db, project, user, archived=archived)
+    project = _get_visible(db, project_id, user, for_update=True)
+    if (project.archived_at is not None) == archived:
+        return to_out(project)
+    set_project_archived(db, project, user, archived=archived)
     db.commit()
     cache.bump("analytics")
     db.refresh(project)
-    return out
+    return to_out(project)
 
 
 @router.post("/{project_id}/archive", response_model=ProjectOut)
@@ -253,9 +255,9 @@ def create_project(
     user = lock_actor(db, user, roles=PROJECT_EDITORS)
     project = Project(cost=Decimal("0"), stage_scheme="customer")
     try:
-        locked_refs = lock_project_references(db, data, data.financial_entries or [])
-        references = validate_financial_entries(data.financial_entries or [], locked_refs)
-        apply_project_data(db, project, data, user, locked_refs)
+        locked_refs = _lock_references(db, data, data.financial_entries or [])
+        references = _validate_financial_entries(data.financial_entries or [], locked_refs)
+        _apply(db, project, data, user, locked_refs)
         db.add(project)
         db.flush()
         audit.record(
@@ -263,17 +265,17 @@ def create_project(
             name=project.name, after=project_snapshot(db, project), author_name=user.full_name,
         )
         if data.financial_entries is not None:
-            replace_financial_entries_impl(db, project, data.financial_entries, references, user)
+            _replace_financial_entries(db, project, data.financial_entries, references, user)
         db.commit()
     except IntegrityError:
-        check_integrity_conflict(db, data)
+        _check_integrity_conflict(db, data)
         raise
     except Exception:
         db.rollback()
         raise
     cache.bump("analytics")
     db.refresh(project)
-    return to_project_out_dict(project)
+    return to_out(project)
 
 
 @router.put("/{project_id}", response_model=ProjectOut)
@@ -284,14 +286,14 @@ def update_project(
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> dict:
     user = lock_actor(db, user, roles=PROJECT_EDITORS)
-    project = get_visible_project(db, project_id, user, for_update=True)
-    require_active_project(project)
+    project = _get_visible(db, project_id, user, for_update=True)
+    _require_active(project)
     try:
-        locked_refs = lock_project_references(db, data, data.financial_entries or [])
-        references = validate_financial_entries(data.financial_entries or [], locked_refs, project)
+        locked_refs = _lock_references(db, data, data.financial_entries or [])
+        references = _validate_financial_entries(data.financial_entries or [], locked_refs, project)
         field_labels = effective_project_field_labels(db)
         before = project_snapshot(db, project, field_labels=field_labels)
-        apply_project_data(db, project, data, user, locked_refs)
+        _apply(db, project, data, user, locked_refs)
         after = project_snapshot(db, project, field_labels=field_labels)
         changed = not same_project_values(before, after)
         if changed:
@@ -300,11 +302,11 @@ def update_project(
                 before=before, after=after, author_name=user.full_name,
             )
         if data.financial_entries is not None:
-            finances_changed = replace_financial_entries_impl(db, project, data.financial_entries, references, user)
+            finances_changed = _replace_financial_entries(db, project, data.financial_entries, references, user)
             changed = changed or finances_changed
         db.commit()
     except IntegrityError:
-        check_integrity_conflict(db, data, project_id)
+        _check_integrity_conflict(db, data, project_id)
         raise
     except Exception:
         db.rollback()
@@ -312,7 +314,7 @@ def update_project(
     if changed:
         cache.bump("analytics")
     db.refresh(project)
-    return to_project_out_dict(project)
+    return to_out(project)
 
 
 @router.put("/{project_id}/financial-entries", response_model=list[ProjectFinancialEntryOut])
@@ -323,12 +325,12 @@ def replace_financial_entries(
     user: User = Depends(require_roles(*PROJECT_EDITORS)),
 ) -> list[ProjectFinancialEntry]:
     user = lock_actor(db, user, roles=PROJECT_EDITORS)
-    project = get_visible_project(db, project_id, user, for_update=True)
-    require_active_project(project)
+    project = _get_visible(db, project_id, user, for_update=True)
+    _require_active(project)
     try:
-        locked_refs = lock_project_references(db, None, entries)
-        references = validate_financial_entries(entries, locked_refs, project)
-        changed = replace_financial_entries_impl(db, project, entries, references, user)
+        locked_refs = _lock_references(db, None, entries)
+        references = _validate_financial_entries(entries, locked_refs, project)
+        changed = _replace_financial_entries(db, project, entries, references, user)
         if not changed:
             return project.financial_entries
         db.commit()
