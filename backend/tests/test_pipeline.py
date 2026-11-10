@@ -133,3 +133,55 @@ def test_gantt_shows_stage_segments_and_finance_months(as_analyst, db):
         (2026, 3, 10.0, True), (2026, 3, 5.0, False),
     }
     assert body["costs"] == []
+
+
+def test_stage_reorder_preserves_past_transition_direction_and_applies_to_future(client, db):
+    from conftest import login
+
+    login(client, db, "admin@example.com")
+    lead, qual = _stage(db, "lead"), _stage(db, "lead_work")
+    assert lead.position < qual.position
+
+    p_past = _create(client, db, name="Прошлый переход", customer_stage_id=lead.id)
+    _shift_history(db, p_past["id"], 20)
+    # Переход lead -> qualification до перестановки (вперёд / stage_up)
+    assert (
+        client.put(
+            f"/api/projects/{p_past['id']}",
+            json=customer_payload(db, name="Прошлый переход", customer_stage_id=qual.id),
+        ).status_code
+        == 200
+    )
+
+    # Переставляем qualification на позицию 1 (теперь qualification перед lead)
+    assert (
+        client.put(
+            f"/api/reference-admin/customer_stage/{qual.id}/position",
+            json={"position": 1},
+        ).status_code
+        == 200
+    )
+
+    # Новый проект переходит lead -> qualification ПОСЛЕ перестановки (теперь это назад / stage_down)
+    p_future = _create(client, db, name="Будущий переход", customer_stage_id=lead.id)
+    _shift_history(db, p_future["id"], 20)
+    assert (
+        client.put(
+            f"/api/projects/{p_future['id']}",
+            json=customer_payload(db, name="Будущий переход", customer_stage_id=qual.id),
+        ).status_code
+        == 200
+    )
+
+    today = date.today()
+    body = client.get(
+        "/api/analytics/changes",
+        params={
+            "date_from": (today - timedelta(days=5)).isoformat(),
+            "date_to": (today + timedelta(days=1)).isoformat(),
+        },
+    ).json()
+    found = {i["project_id"]: i["indicators"] for i in body["items"]}
+    assert found[p_past["id"]] == ["stage_up"]
+    assert found[p_future["id"]] == ["stage_down"]
+

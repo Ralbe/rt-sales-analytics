@@ -3,10 +3,11 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models import (
     CLOSED_STAGES,
+    AuditLog,
     Client,
     Project,
     ProjectFinancialEntry,
@@ -18,6 +19,7 @@ from app.models import (
 )
 from app.schemas import ProjectFinancialEntryIn, ProjectIn
 from app.services import audit
+from app.services.pipeline import SUCCESS_STAGE_CODE
 from app.services.project_field_labels import (
     effective_project_field_labels,
     with_snapshot_field_labels,
@@ -28,11 +30,45 @@ from app.services.project_history import (
 )
 
 
+def previous_stage_probabilities(db: Session, project: Project) -> dict[int, int | None]:
+    """Возвращает последнюю фактически сохранённую вероятность для каждого посещённого этапа проекта."""
+    if project.id is None or project.stage_scheme != "customer":
+        return {}
+    logs = db.scalars(
+        select(AuditLog)
+        .where(AuditLog.entity == "project", AuditLog.entity_id == project.id)
+        .order_by(AuditLog.created_at, AuditLog.id)
+    ).all()
+    visited: dict[int, int | None] = {}
+    for log in logs:
+        if log.action not in {"create", "update", "archive", "restore"} or not isinstance(log.payload, dict):
+            continue
+        for side in ("before", "after"):
+            snap = log.payload.get(side)
+            if not isinstance(snap, dict):
+                continue
+            stage_id = snap.get("customer_stage_id")
+            if type(stage_id) is not int:
+                continue
+            prob = snap.get("probability")
+            if type(prob) is int and 0 <= prob <= 100:
+                visited[stage_id] = prob
+            elif stage_id not in visited:
+                visited[stage_id] = None
+    return visited
+
+
 def to_project_out_dict(p: Project) -> dict:
     margin = p.amount - p.cost
     revenue = sum((e.amount for e in p.financial_entries if e.kind == "revenue"), Decimal(0)) * 1000
     costs = sum((e.amount for e in p.financial_entries if e.kind == "cost"), Decimal(0)) * 1000
     months = [date(e.year, e.month, 1) for e in p.financial_entries if e.kind == "revenue" and e.amount > 0]
+    session = object_session(p)
+    visited = (
+        {str(k): v for k, v in previous_stage_probabilities(session, p).items()}
+        if session is not None and p.stage_scheme == "customer" and p.id is not None
+        else {}
+    )
     return {
         "id": p.id,
         "name": p.name,
@@ -73,6 +109,7 @@ def to_project_out_dict(p: Project) -> dict:
         "created_at": p.created_at,
         "updated_at": p.updated_at,
         "archived_at": p.archived_at,
+        "visited_stage_probabilities": visited,
         "financial_entries": p.financial_entries,
     }
 
@@ -284,8 +321,78 @@ def apply_project_data(
     if stage_changed and customer_stage is not None and customer_stage.probability is None:
         raise HTTPException(422, {"field": "customer_stage_id", "message": "У этапа не задана вероятность"})
 
+    probability_mode = getattr(data, "probability_mode", None)
+    probability_override = getattr(data, "probability_override", None)
+
+    if probability_override is not None:
+        if user.role != Role.admin:
+            raise HTTPException(
+                403,
+                {"field": "probability", "message": "Только администратор может вручную изменять вероятность проекта"},
+            )
+        if not customer:
+            raise HTTPException(
+                422, {"field": "probability_override", "message": "Поле применяется только к проектам на этапах по ТЗ"}
+            )
+        if project.id is None or stage_changed:
+            raise HTTPException(
+                422,
+                {
+                    "field": "probability_override",
+                    "message": "Ручное изменение вероятности доступно только без одновременной смены этапа",
+                },
+            )
+
+    if probability_mode is not None:
+        if not customer or not stage_changed:
+            raise HTTPException(
+                422,
+                {
+                    "field": "probability_mode",
+                    "message": "Выбор режима вероятности доступен только при смене этапа проекта",
+                },
+            )
+        if project.id is None and probability_mode == "previous":
+            raise HTTPException(
+                422, {"field": "probability_mode", "message": "У нового проекта нет истории посещения этапов"}
+            )
+
+    target_probability: int | None = None
+    if customer:
+        if stage_changed:
+            assert customer_stage is not None and customer_stage.probability is not None
+            if project.id is not None and probability_mode == "previous":
+                visited = previous_stage_probabilities(db, project)
+                if data.customer_stage_id not in visited:
+                    raise HTTPException(
+                        422, {"field": "probability_mode", "message": "Этап ранее не посещался этим проектом"}
+                    )
+                prev_prob = visited[data.customer_stage_id]
+                if prev_prob is None:
+                    raise HTTPException(
+                        422,
+                        {
+                            "field": "probability_mode",
+                            "message": "В истории проекта нет достоверной сохранённой вероятности для этого этапа",
+                        },
+                    )
+                target_probability = prev_prob
+            else:
+                target_probability = customer_stage.probability
+        elif probability_override is not None:
+            target_probability = probability_override
+
     was_closed = project.stage in CLOSED_STAGES if project.stage else False
-    excluded = {"manager_id", "segment_id", "financial_entries", "stage", "customer_stage_id", "probability"}
+    excluded = {
+        "manager_id",
+        "segment_id",
+        "financial_entries",
+        "stage",
+        "customer_stage_id",
+        "probability",
+        "probability_mode",
+        "probability_override",
+    }
     if project.id is not None and "implementation_year" not in data.model_fields_set:
         excluded.add("implementation_year")
     for field, value in data.model_dump(exclude=excluded).items():
@@ -295,8 +402,8 @@ def apply_project_data(
     if customer:
         project.stage = None
         project.customer_stage_id = data.customer_stage_id
-        if stage_changed:
-            project.probability = customer_stage.probability
+        if target_probability is not None:
+            project.probability = target_probability
         project.closed_at = None
         return
     if data.stage is not None:
@@ -308,6 +415,54 @@ def apply_project_data(
             project.closed_at = max(date.today(), data.start_date)
     else:
         project.closed_at = None
+
+
+def build_project_update_audit_metadata(
+    db: Session,
+    project: Project,
+    data: ProjectIn,
+    old_stage_id: int | None,
+    old_probability: int | None,
+    locked_refs: dict[int, ReferenceValue],
+) -> dict:
+    """Формирует метаданные перехода этапа и ручной смены вероятности для журнала аудита."""
+    if project.stage_scheme != "customer":
+        return {}
+    if old_stage_id is not None and project.customer_stage_id is not None and old_stage_id != project.customer_stage_id:
+        old_stage = locked_refs.get(old_stage_id) or db.get(ReferenceValue, old_stage_id)
+        new_stage = locked_refs.get(project.customer_stage_id) or db.get(ReferenceValue, project.customer_stage_id)
+        old_pos = old_stage.position if old_stage is not None else None
+        new_pos = new_stage.position if new_stage is not None else None
+        old_code = old_stage.code if old_stage is not None else None
+        new_code = new_stage.code if new_stage is not None else None
+        direction = "unknown"
+        if type(old_pos) is int and type(new_pos) is int:
+            if new_pos > old_pos:
+                direction = "stage_up"
+            elif new_pos < old_pos:
+                direction = "stage_down"
+        return {
+            "stage_transition": {
+                "from_stage_id": old_stage_id,
+                "to_stage_id": project.customer_stage_id,
+                "from_position": old_pos,
+                "to_position": new_pos,
+                "direction": direction,
+                "probability_mode": getattr(data, "probability_mode", None) or "current",
+                "before_probability": old_probability,
+                "after_probability": project.probability,
+                "exited_success": old_code == SUCCESS_STAGE_CODE and new_code != SUCCESS_STAGE_CODE,
+            }
+        }
+    if old_probability is not None and old_probability != project.probability:
+        return {
+            "probability_override": {
+                "stage_id": project.customer_stage_id,
+                "before_probability": old_probability,
+                "after_probability": project.probability,
+            }
+        }
+    return {}
 
 
 def replace_financial_entries_impl(

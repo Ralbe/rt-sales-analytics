@@ -41,6 +41,7 @@ from app.services.projects import (
     SORT_PATTERN,
     apply_project_data,
     build_filtered_query,
+    build_project_update_audit_metadata,
     check_integrity_conflict,
     find_duplicate_project,
     generate_projects_xlsx,
@@ -292,14 +293,19 @@ def update_project(
         locked_refs = _lock_references(db, data, data.financial_entries or [])
         references = _validate_financial_entries(data.financial_entries or [], locked_refs, project)
         field_labels = effective_project_field_labels(db)
+        old_stage_id = project.customer_stage_id
+        old_probability = project.probability
         before = project_snapshot(db, project, field_labels=field_labels)
         _apply(db, project, data, user, locked_refs)
         after = project_snapshot(db, project, field_labels=field_labels)
         changed = not same_project_values(before, after)
         if changed:
+            extra_audit = build_project_update_audit_metadata(
+                db, project, data, old_stage_id, old_probability, locked_refs
+            )
             audit.record(
                 db, user.id, "update", "project", project.id,
-                before=before, after=after, author_name=user.full_name,
+                before=before, after=after, author_name=user.full_name, **extra_audit,
             )
         if data.financial_entries is not None:
             finances_changed = _replace_financial_entries(db, project, data.financial_entries, references, user)

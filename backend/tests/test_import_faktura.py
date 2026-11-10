@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 
 from app.import_faktura import import_rows
-from app.models import AuditLog, Project, User
+from app.models import AuditLog, Project, ReferenceValue, User
 
 
 def _row(**overrides):
@@ -56,3 +56,16 @@ def test_import_skips_unknown_stage(db):
     result = import_rows(db, [_row(Этап="Непонятный", **{"Описание проекта": "Другой"})], author)
     assert (result.created, result.skipped) == (0, 1)
     assert "этап" in result.warnings[0]
+
+
+def test_import_skips_inactive_customer_stage(db):
+    author = db.scalar(select(User).where(User.email == "admin@example.com"))
+    stage = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "proposal")
+    )
+    stage.is_active = False
+    db.flush()
+    result = import_rows(db, [_row(**{"Описание проекта": "Проект на отключённом этапе"})], author)
+    assert (result.created, result.skipped) == (0, 1)
+    assert "этап" in result.warnings[0]
+

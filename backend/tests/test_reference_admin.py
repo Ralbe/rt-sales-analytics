@@ -25,7 +25,7 @@ def test_admin_endpoints_reject_non_admin(client, db, email):
 
 def test_admin_lifecycle_allowlist_audit_and_stage_guard(admin, db):
     assert admin.post("/api/reference-admin/roles", json={"name": "А"}).status_code == 404
-    assert admin.post("/api/reference-admin/customer_stage", json={"name": "А"}).status_code == 409
+    assert admin.post("/api/reference-admin/customer_stage", json={"name": "А"}).status_code == 422
     assert admin.post("/api/reference-admin/payment_type", json={"name": "А", "code": "x"}).status_code == 422
     response = admin.post("/api/reference-admin/payment_type", json={"name": " Новый платёж "})
     assert response.status_code == 201, response.text
@@ -53,12 +53,23 @@ def test_admin_lifecycle_allowlist_audit_and_stage_guard(admin, db):
     assert logs[1].payload["before"]["name"] == "Новый платёж"
     assert logs[1].payload["after"]["name"] == "Изменён"
     assert admin.delete(f"/api/reference-admin/payment_type/{item_id}").status_code == 404
-    stage = db.scalar(select(ReferenceValue).where(ReferenceValue.category == "customer_stage"))
-    prior = (stage.code, stage.position, stage.probability, stage.is_active)
+    success_stage = db.scalar(
+        select(ReferenceValue).where(
+            ReferenceValue.category == "customer_stage", ReferenceValue.code == "success"
+        )
+    )
     assert (
-        admin.put(f"/api/reference-admin/customer_stage/{stage.id}/active", json={"is_active": False}).status_code
+        admin.put(
+            f"/api/reference-admin/customer_stage/{success_stage.id}/active", json={"is_active": False}
+        ).status_code
         == 409
     )
+    stage = db.scalar(
+        select(ReferenceValue).where(
+            ReferenceValue.category == "customer_stage", ReferenceValue.code != "success"
+        )
+    )
+    prior = (stage.code, stage.position, stage.probability, stage.is_active)
     assert (
         admin.put(
             f"/api/reference-admin/customer_stage/{stage.id}/name", json={"name": "Этап переименован"}
@@ -174,3 +185,193 @@ def test_inactive_financial_references_are_only_retained(admin, db, kind, field,
     result = admin.put(f"/api/projects/{project_id}/financial-entries", json=[row | {"id": row_id, "year": 2028}])
     assert result.status_code == 200, result.text
     assert admin.put(f"/api/projects/{project_id}/financial-entries", json=[row]).status_code == 422
+
+
+def test_customer_stage_create_positions_validation_and_uniqueness(admin, db):
+    stages = admin.get("/api/reference-admin/customer_stage").json()
+    assert [s["position"] for s in stages] == list(range(1, len(stages) + 1))
+    assert stages[-1]["code"] == "success"
+
+    # Негативные проверки probability и position
+    for bad_prob in (-1, 101, 12.5, "50", True, None):
+        r = admin.post(
+            "/api/reference-admin/customer_stage",
+            json={"name": "Неверная вероятность", "probability": bad_prob, "position": 1},
+        )
+        assert r.status_code == 422
+    for bad_pos in (0, -1, len(stages) + 1, "1", True, None):
+        r = admin.post(
+            "/api/reference-admin/customer_stage",
+            json={"name": "Неверная позиция", "probability": 25, "position": bad_pos},
+        )
+        assert r.status_code == 422
+
+    # Граничные значения 0% в начале (position=1) и 100% перед success (position=len(stages))
+    r_first = admin.post(
+        "/api/reference-admin/customer_stage",
+        json={"name": " Нулевой старт ", "probability": 0, "position": 1},
+    )
+    assert r_first.status_code == 201, r_first.text
+    first_item = r_first.json()
+    assert (first_item["name"], first_item["probability"], first_item["position"]) == ("Нулевой старт", 0, 1)
+
+    stages_after_first = admin.get("/api/reference-admin/customer_stage").json()
+    assert [s["position"] for s in stages_after_first] == list(range(1, len(stages_after_first) + 1))
+    assert stages_after_first[-1]["code"] == "success"
+
+    r_mid = admin.post(
+        "/api/reference-admin/customer_stage",
+        json={"name": "Промежуточный этап", "probability": 45, "position": 4},
+    )
+    assert r_mid.status_code == 201, r_mid.text
+    assert r_mid.json()["position"] == 4
+
+    stages_before_last = admin.get("/api/reference-admin/customer_stage").json()
+    r_before_success = admin.post(
+        "/api/reference-admin/customer_stage",
+        json={"name": "Предфинальный этап", "probability": 100, "position": len(stages_before_last)},
+    )
+    assert r_before_success.status_code == 201, r_before_success.text
+
+    final_stages = admin.get("/api/reference-admin/customer_stage").json()
+    assert [s["position"] for s in final_stages] == list(range(1, len(final_stages) + 1))
+    assert final_stages[-1]["code"] == "success"
+    assert final_stages[-2]["name"] == "Предфинальный этап"
+
+    # Дубликаты имени (case-insensitive) запрещены среди активных и отключённых этапов
+    assert (
+        admin.post(
+            "/api/reference-admin/customer_stage",
+            json={"name": "нулевой СТАРТ", "probability": 15, "position": 1},
+        ).status_code
+        == 409
+    )
+    assert (
+        admin.put(
+            f"/api/reference-admin/customer_stage/{first_item['id']}/active", json={"is_active": False}
+        ).status_code
+        == 200
+    )
+    assert (
+        admin.post(
+            "/api/reference-admin/customer_stage",
+            json={"name": "НУЛЕВОЙ старт", "probability": 15, "position": 1},
+        ).status_code
+        == 409
+    )
+
+
+def test_customer_stage_edit_does_not_recalculate_existing_projects(admin, db):
+    stage = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "lead")
+    )
+    orig_prob = stage.probability
+    created = admin.post("/api/projects", json=_payload(db, customer_stage_id=stage.id))
+    assert created.status_code == 201, created.text
+    project_id = created.json()["id"]
+    assert created.json()["probability"] == orig_prob
+
+    edited = admin.put(
+        f"/api/reference-admin/customer_stage/{stage.id}",
+        json={"name": "Инициация обновлена", "probability": 35},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["name"] == "Инициация обновлена"
+    assert edited.json()["probability"] == 35
+
+    # Существующий проект сохраняет прежнюю вероятность, но видит актуальное имя этапа
+    existing = admin.get(f"/api/projects/{project_id}").json()
+    assert existing["probability"] == orig_prob
+    assert existing["customer_stage"]["name"] == "Инициация обновлена"
+
+    # Новый проект на этом этапе получает новую вероятность 35%
+    created2 = admin.post("/api/projects", json=_payload(db, name="Второй проект", customer_stage_id=stage.id))
+    assert created2.status_code == 201, created2.text
+    assert created2.json()["probability"] == 35
+
+
+def test_customer_stage_deactivate_reactivate_and_reorder(admin, db):
+    stages = admin.get("/api/reference-admin/customer_stage").json()
+    lead = stages[0]
+    qual = stages[1]
+    success = stages[-1]
+
+    project = admin.post("/api/projects", json=_payload(db, customer_stage_id=lead["id"])).json()
+
+    # Отключение этапа
+    deact = admin.put(f"/api/reference-admin/customer_stage/{lead['id']}/active", json={"is_active": False})
+    assert deact.status_code == 200, deact.text
+    assert deact.json()["is_active"] is False
+
+    # Отключённый этап пропадает из /api/refs, но остаётся у проекта и не даёт назначать себя заново
+    refs_stages = [s["id"] for s in admin.get("/api/refs").json()["customer_stages"]]
+    assert lead["id"] not in refs_stages
+    assert (
+        admin.post("/api/projects", json=_payload(db, name="Запрещённый", customer_stage_id=lead["id"])).status_code
+        == 422
+    )
+
+    other_proj = admin.post("/api/projects", json=_payload(db, name="Другой", customer_stage_id=qual["id"])).json()
+    assert (
+        admin.put(
+            f"/api/projects/{other_proj['id']}",
+            json=_payload(db, name="Другой", customer_stage_id=lead["id"]),
+        ).status_code
+        == 422
+    )
+    # Сохранение проекта без смены отключённого этапа разрешено
+    keep = admin.put(
+        f"/api/projects/{project['id']}",
+        json=_payload(db, customer_stage_id=lead["id"], description="Остаёмся на этапе"),
+    )
+    assert keep.status_code == 200, keep.text
+
+    # Перемещение отключённого этапа разрешено, success остаётся последним
+    moved = admin.put(
+        f"/api/reference-admin/customer_stage/{lead['id']}/position",
+        json={"position": 3, "expected_position": 1},
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["position"] == 3
+    all_stages = admin.get("/api/reference-admin/customer_stage").json()
+    assert [s["position"] for s in all_stages] == list(range(1, len(all_stages) + 1))
+    assert all_stages[-1]["code"] == "success"
+
+    # Устаревший expected_position возвращает 409 Conflict
+    stale = admin.put(
+        f"/api/reference-admin/customer_stage/{lead['id']}/position",
+        json={"position": 2, "expected_position": 1},
+    )
+    assert stale.status_code == 409
+
+    # Системный этап success нельзя переместить и нельзя поставить другой этап на его место
+    assert (
+        admin.put(
+            f"/api/reference-admin/customer_stage/{success['id']}/position",
+            json={"position": 1},
+        ).status_code
+        == 409
+    )
+    assert (
+        admin.put(
+            f"/api/reference-admin/customer_stage/{qual['id']}/position",
+            json={"position": len(all_stages)},
+        ).status_code
+        == 422
+    )
+
+    # Повторное включение с одновременным изменением имени, вероятности и позиции
+    react = admin.put(
+        f"/api/reference-admin/customer_stage/{lead['id']}/active",
+        json={"is_active": True, "name": "Возвращённый этап", "probability": 22, "position": 2},
+    )
+    assert react.status_code == 200, react.text
+    body = react.json()
+    assert (body["is_active"], body["name"], body["probability"], body["position"]) == (
+        True,
+        "Возвращённый этап",
+        22,
+        2,
+    )
+    assert lead["id"] in [s["id"] for s in admin.get("/api/refs").json()["customer_stages"]]
+

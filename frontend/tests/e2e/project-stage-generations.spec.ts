@@ -37,7 +37,7 @@ type ProjectWrite = Record<string, unknown> & {
   name: string; description: string; stage?: Stage; probability?: number; customer_stage_id?: number;
 };
 
-async function mockApi(page: Page, initial: Project | null = LEGACY) {
+async function mockApi(page: Page, initial: Project | null = LEGACY, role: "analyst" | "admin" = "analyst") {
   const state = { current: initial && structuredClone(initial), writes: [] as ProjectWrite[], unexpected: [] as string[] };
   await page.route("**/api/**", async (route) => {
     if (await emptyPipeline(route)) return;
@@ -45,7 +45,7 @@ async function mockApi(page: Page, initial: Project | null = LEGACY) {
     const path = new URL(request.url()).pathname.replace(/^\/api/, "");
     const method = request.method();
     if (method === "GET") {
-      if (path === "/auth/me") return route.fulfill({ json: { ...MANAGER, email: "stages@example.test", role: "analyst" } });
+      if (path === "/auth/me") return route.fulfill({ json: { ...MANAGER, email: "stages@example.test", role } });
       if (path === "/refs") return route.fulfill({ json: REFS });
       if (path === "/clients") return route.fulfill({ json: [CLIENT] });
       if (path === "/dashboards") return route.fulfill({ json: [] });
@@ -64,9 +64,17 @@ async function mockApi(page: Page, initial: Project | null = LEGACY) {
         const selected = CUSTOMER_STAGES.find((stage) => stage.id === body.customer_stage_id);
         expect(selected).toBeDefined();
         const changedStage = state.current?.customer_stage?.id !== selected!.id;
+        const visitedProb = state.current?.visited_stage_probabilities?.[String(selected!.id)];
+        const resolvedProb = changedStage
+          ? body.probability_mode === "previous" && typeof visitedProb === "number"
+            ? visitedProb
+            : selected!.probability
+          : typeof body.probability_override === "number"
+            ? body.probability_override
+            : state.current!.probability;
         next = {
           ...(state.current ?? LEGACY), ...body, stage_scheme: "customer", stage: null,
-          customer_stage: selected!, probability: changedStage ? selected!.probability : state.current!.probability,
+          customer_stage: selected!, probability: resolvedProb,
         };
       } else {
         expect(body).not.toHaveProperty("customer_stage_id");
@@ -263,3 +271,36 @@ test("прежний черновик новой карточки не возв�
   expect(state.writes[0].customer_stage_id).toBe(101);
   expect(state.unexpected).toEqual([]);
 });
+
+test("повторный визит на этап показывает выбор вероятности (current vs previous), а админ может переопределять вероятность вручную", async ({ page }) => {
+  const state = await mockApi(
+    page,
+    {
+      ...CUSTOMER,
+      visited_stage_probabilities: { "101": 9, "102": 17 },
+    },
+    "admin",
+  );
+  await page.goto("/projects/42");
+  const probability = page.getByLabel("Вероятность", { exact: false });
+  const stage = page.getByLabel("Этап по ТЗ", { exact: false });
+
+  // Для админа без смены этапа поле вероятности редактируемо
+  await expect(probability).not.toHaveAttribute("readonly", "");
+  await probability.fill("19");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.getByText(/Сохранено в/)).toBeVisible();
+  expect(state.writes[0]).toMatchObject({ customer_stage_id: 102, probability_override: 19 });
+
+  // Переход на ранее посещённый этап 101 показывает радиовыбор вероятности
+  await stage.selectOption("101");
+  const modeGroup = page.getByRole("radiogroup", { name: "Выбор вероятности для ранее посещённого этапа" });
+  await expect(modeGroup).toBeVisible();
+  await expect(probability).toHaveValue("3");
+  await modeGroup.getByRole("radio", { name: /Ранее использованная на этом этапе \(9%\)/ }).check();
+  await expect(probability).toHaveValue("9");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  expect(state.writes[1]).toMatchObject({ customer_stage_id: 101, probability_mode: "previous" });
+  await expect(probability).toHaveValue("9");
+});
+
