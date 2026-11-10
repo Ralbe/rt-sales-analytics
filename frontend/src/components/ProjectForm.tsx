@@ -652,7 +652,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                         checked={probabilityMode === "current"}
                         onChange={() => selectProbabilityMode("current")}
                       />
-                      Текущая вероятность этапа из справочника ({currentStageProb ?? "—"}%)
+                      Текущее значение этапа из справочника ({currentStageProb ?? "—"}%)
                     </label>
                     <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <input

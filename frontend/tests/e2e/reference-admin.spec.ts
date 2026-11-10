@@ -133,7 +133,7 @@ test("управление этапами проектов: создание, р
   await createDialog.getByLabel("Вероятность (%)").fill("35");
   await createDialog.getByLabel("Позиция в списке").selectOption("2");
   await createDialog.getByRole("button", { name: "Создать этап" }).click();
-  await expect(page.getByRole("cell", { name: "3. КП и расчёт" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "3. КП и расчёт", exact: true })).toBeVisible();
 
   // Перемещение кнопкой вниз -> Отмена не отправляет запрос
   await page.getByRole("button", { name: "Переместить ниже: 1. Лид" }).click();
@@ -160,7 +160,7 @@ test("управление этапами проектов: создание, р
   await activateDialog.getByLabel("Название этапа").fill("1. Лид обновлённый");
   await activateDialog.getByLabel("Вероятность (%)").fill("15");
   await activateDialog.getByRole("button", { name: "Подтвердить включение" }).click();
-  await expect(page.getByRole("cell", { name: "1. Лид обновлённый" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "1. Лид обновлённый", exact: true })).toBeVisible();
 });
 
 test("пользователь не получает административный экран", async ({ page }) => {
