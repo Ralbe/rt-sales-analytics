@@ -185,6 +185,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const draftLoadedRef = useRef(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
+  const [probabilityMode, setProbabilityMode] = useState<"current" | "previous">("current");
   const persistedIdRef = useRef(project?.id);
   const savedSegmentRef = useRef(project?.segment);
   const savedManagerRef = useRef(project?.manager.id);
@@ -262,10 +263,25 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   }, [values.client?.id, checkName]);
 
   const onCustomerStageChange = (stageId: string) => {
+    setProbabilityMode("current");
     const stage = refs?.customer_stages.find((item) => String(item.id) === stageId);
     const retainedStage = project?.stage_scheme === "customer" && stageId === String(project.customer_stage?.id);
     const probability = retainedStage ? String(project.probability) : stage ? String(stage.probability) : "";
     setValue("probability", probability, { shouldValidate: true });
+  };
+
+  const selectProbabilityMode = (mode: "current" | "previous") => {
+    setProbabilityMode(mode);
+    const stageId = getValues("customer_stage_id");
+    const stage = refs?.customer_stages.find((item) => String(item.id) === stageId);
+    const prevProb = project?.visited_stage_probabilities?.[stageId];
+    const nextProb =
+      mode === "previous" && prevProb !== undefined && prevProb !== null
+        ? String(prevProb)
+        : stage
+          ? String(stage.probability)
+          : "";
+    setValue("probability", nextProb, { shouldValidate: true });
   };
 
   const submit = handleSubmit(async (v) => {
@@ -293,6 +309,21 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       setError("manager_id", { type: "manual", message: "Выберите доступного ответственного" });
       return;
     }
+    const stageChanged =
+      customerScheme && projectId !== undefined && Number(v.customer_stage_id) !== project?.customer_stage?.id;
+    const targetVisited =
+      stageChanged &&
+      Boolean(
+        project?.visited_stage_probabilities &&
+          Object.prototype.hasOwnProperty.call(project.visited_stage_probabilities, v.customer_stage_id),
+      );
+    const adminOverrodeProbability =
+      customerScheme &&
+      projectId !== undefined &&
+      !stageChanged &&
+      me?.role === "admin" &&
+      v.probability.trim() !== "" &&
+      Number(v.probability) !== project?.probability;
     const body = {
       ...(projectId === undefined || selectedManager !== savedManagerRef.current ? { manager_id: selectedManager } : {}),
       ...(projectId === undefined || selectedYear !== savedYearRef.current ? { implementation_year: selectedYear } : {}),
@@ -302,7 +333,11 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
       client_id: v.client!.id,
       service_id: Number(v.service_id),
       ...(customerScheme
-        ? { customer_stage_id: Number(v.customer_stage_id) }
+        ? {
+            customer_stage_id: Number(v.customer_stage_id),
+            ...(targetVisited ? { probability_mode: probabilityMode } : {}),
+            ...(adminOverrodeProbability ? { probability_override: Number(v.probability) } : {}),
+          }
         : { stage: v.stage, probability: Number(v.probability) }),
       amount: toNumber(v.amount).toFixed(2),
       cost: (v.cost.trim() ? toNumber(v.cost) : 0).toFixed(2),
@@ -361,6 +396,7 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
     queryClient.setQueryData(projectKey, saved);
     financialBaseline.current = financialRowsFromProject(saved);
     setFinancialEntries(financialBaseline.current);
+    setProbabilityMode("current");
     reset(fromProject(saved));
     setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
     if (isNew) {
@@ -393,6 +429,22 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
   const savedSegmentSelected = savedSegment && String(savedSegment.id) === values.segment_id;
   const inheritedInactive = values.client?.segment_id !== undefined &&
     !refs?.segments.some((item) => item.id === values.client?.segment_id);
+
+  const isStageChangedOnCustomer =
+    customerScheme && !isNew && values.customer_stage_id !== "" && values.customer_stage_id !== String(project?.customer_stage?.id ?? "");
+  const hasVisitedSelectedStage =
+    isStageChangedOnCustomer &&
+    Boolean(
+      project?.visited_stage_probabilities &&
+        Object.prototype.hasOwnProperty.call(project.visited_stage_probabilities, values.customer_stage_id),
+    );
+  const previousStageProb = hasVisitedSelectedStage
+    ? (project?.visited_stage_probabilities?.[values.customer_stage_id] ?? null)
+    : null;
+  const currentStageProb =
+    refs?.customer_stages.find((item) => String(item.id) === values.customer_stage_id)?.probability ?? null;
+  const canAdminOverrideProb =
+    customerScheme && !isNew && me?.role === "admin" && !isStageChangedOnCustomer;
 
   const amount = isNumber(values.amount ?? "") ? toNumber(values.amount!) : null;
   const cost = values.cost?.trim() ? (isNumber(values.cost) ? toNumber(values.cost) : null) : 0;
@@ -577,6 +629,45 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                 {customerScheme ? <div className="error">{err("customer_stage_id")}</div> :
                   <div className="hint">Сохранённый вспомогательный этап. Не изменяет прежнюю стадию и вероятность.</div>}
                 {customerScheme && <div className="hint" role="note" data-completion-state="unknown">Состояние завершения: не определено</div>}
+                {hasVisitedSelectedStage && (
+                  <div
+                    role="radiogroup"
+                    aria-label="Выбор вероятности для ранее посещённого этапа"
+                    style={{
+                      marginTop: 8,
+                      padding: 10,
+                      borderRadius: 6,
+                      border: "1px solid var(--border, #cbd5e1)",
+                      display: "grid",
+                      gap: 6,
+                      fontSize: 13,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>Этап уже посещался этим проектом. Выберите вероятность:</div>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input
+                        type="radio"
+                        name="probability_mode_choice"
+                        value="current"
+                        checked={probabilityMode === "current"}
+                        onChange={() => selectProbabilityMode("current")}
+                      />
+                      Текущая вероятность этапа из справочника ({currentStageProb ?? "—"}%)
+                    </label>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input
+                        type="radio"
+                        name="probability_mode_choice"
+                        value="previous"
+                        disabled={previousStageProb === null}
+                        checked={probabilityMode === "previous"}
+                        onChange={() => selectProbabilityMode("previous")}
+                      />
+                      Ранее использованная на этом этапе (
+                      {previousStageProb !== null ? `${previousStageProb}%` : "нет сохранённого значения"})
+                    </label>
+                  </div>
+                )}
               </div>
               <div className={cls("implementation_year")}>
                 <label htmlFor="implementation_year">{label("implementation_year")}</label>
@@ -682,12 +773,18 @@ function ProjectFormInner({ project, readOnly: forcedReadOnly }: { project?: Pro
                   id="probability"
                   className="input"
                   inputMode="numeric"
-                  readOnly={customerScheme}
+                  readOnly={customerScheme && !canAdminOverrideProb}
                   {...register("probability")}
                 />
-                <div className={customerScheme ? "hint" : "error"}>
-                  {customerScheme ? "По выбранному этапу проекта." : err("probability")}
-                </div>
+                {err("probability") ? (
+                  <div className="error">{err("probability")}</div>
+                ) : (
+                  <div className="hint">
+                    {canAdminOverrideProb
+                      ? "Администратор может вручную изменить вероятность на текущем этапе."
+                      : "По выбранному этапу проекта."}
+                  </div>
+                )}
               </div>
             </div>
 

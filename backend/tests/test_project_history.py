@@ -318,3 +318,71 @@ def test_update_shows_reference_names_in_both_snapshots(as_user, db):
             "after": references[1].name,
         }
     ]
+
+
+def test_renamed_customer_stage_is_shown_with_current_name_in_history_and_gantt_without_mutating_audit(client, db):
+    from conftest import login
+    from project_factories import customer_payload
+
+    login(client, db, "admin@example.com")
+    lead = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "lead")
+    )
+    qual = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "lead_work")
+    )
+    old_lead_name = lead.name
+
+    created = client.post("/api/projects", json=customer_payload(db, customer_stage_id=lead.id)).json()
+    pid = created["id"]
+    assert (
+        client.put(
+            f"/api/projects/{pid}",
+            json=customer_payload(db, customer_stage_id=qual.id),
+        ).status_code
+        == 200
+    )
+
+    # Переименовываем этап lead
+    assert (
+        client.put(
+            f"/api/reference-admin/customer_stage/{lead.id}",
+            json={"name": "Инициация (новое имя)", "probability": lead.probability},
+        ).status_code
+        == 200
+    )
+
+    # В истории проекта и Gantt отображается новое название этапа по ID
+    history = _history(client, pid)["items"]
+    stage_change = next(c for c in history[0]["changes"] if c["field"] == "customer_stage_id")
+    assert stage_change["before"] == "Инициация (новое имя)"
+    assert stage_change["after"] == qual.name
+    assert "Направление перехода этапа: вперёд" in (history[0]["note"] or "")
+
+    gantt_stages = client.get(f"/api/projects/{pid}/gantt").json()["stages"]
+    assert [s["label"] for s in gantt_stages] == ["Инициация (новое имя)", qual.name]
+
+    # При этом сырой AuditLog.payload не переписывался в БД
+    create_log = db.scalar(
+        select(AuditLog).where(AuditLog.entity == "project", AuditLog.entity_id == pid, AuditLog.action == "create")
+    )
+    assert create_log.payload["after"]["_labels"]["customer_stage_id"] == old_lead_name
+
+    # Старое событие без stage_transition не выдумывает направление
+    _log(
+        db,
+        pid,
+        before={
+            "customer_stage_id": qual.id,
+            "_stage_scheme": "customer",
+            "_labels": {"customer_stage_id": qual.name},
+        },
+        after={
+            "customer_stage_id": lead.id,
+            "_stage_scheme": "customer",
+            "_labels": {"customer_stage_id": old_lead_name},
+        },
+    )
+    latest_item = _history(client, pid)["items"][0]
+    assert "Направление перехода этапа: не определено" in (latest_item["note"] or "")
+

@@ -266,3 +266,162 @@ def test_analytics_cache_keys_include_scope_and_worker_uses_same_key(monkeypatch
     result = analytics_api.cached("kpi", analytics.Filters(), lambda: pytest.fail("Ключ прогрева не совпал"),
                                   as_of=date.today())
     assert result == analytics.STAGE_SCOPE
+
+
+def test_repeated_stage_visit_probability_mode_and_admin_override(client, db):
+    from conftest import login
+
+    login(client, db, "admin@example.com")
+    lead = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "lead")
+    )
+    qual = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "lead_work")
+    )
+    prop = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "proposal")
+    )
+
+    # 1. Создаём проект на lead (10%)
+    created = _create(client, db, name="Повторные этапы", customer_stage_id=lead.id)
+    pid = created["id"]
+    assert created["probability"] == 10
+    assert created["visited_stage_probabilities"] == {str(lead.id): 10}
+
+    # 2. Ручная смена вероятности админом на lead -> 17%
+    overridden = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(db, name="Повторные этапы", customer_stage_id=lead.id, probability_override=17),
+    )
+    assert overridden.status_code == 200, overridden.text
+    assert overridden.json()["probability"] == 17
+
+    # 3. Переход на lead_work (10%) — первый визит не наследует ручную 17%
+    to_qual = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(db, name="Повторные этапы", customer_stage_id=qual.id),
+    )
+    assert to_qual.status_code == 200, to_qual.text
+    assert to_qual.json()["probability"] == qual.probability
+    assert to_qual.json()["visited_stage_probabilities"][str(lead.id)] == 17
+
+    # 4. Попытка выбрать previous для непосещённого этапа proposal отклоняется (422)
+    unvisited_prev = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(
+            db, name="Повторные этапы", customer_stage_id=prop.id, probability_mode="previous"
+        ),
+    )
+    assert unvisited_prev.status_code == 422
+
+    # 5. Админ меняет вероятность этапа lead в справочнике на 33%
+    assert (
+        client.put(
+            f"/api/reference-admin/customer_stage/{lead.id}",
+            json={"name": lead.name, "probability": 33},
+        ).status_code
+        == 200
+    )
+
+    # 6. Второй визит на lead с probability_mode="previous" даёт 17% (последняя сохранённая вероятность визита)
+    back_to_lead_prev = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(
+            db, name="Повторные этапы", customer_stage_id=lead.id, probability_mode="previous"
+        ),
+    )
+    assert back_to_lead_prev.status_code == 200, back_to_lead_prev.text
+    assert back_to_lead_prev.json()["probability"] == 17
+
+    # 7. Уходим снова на lead_work с probability_mode="current", затем меняем справочник lead на 44%,
+    # возвращаемся на lead с probability_mode="current" -> 44%, затем снова на lead_work и обратно на lead
+    # (3-й визит) с "previous" -> 44%
+    assert (
+        client.put(
+            f"/api/projects/{pid}",
+            json=customer_payload(
+                db, name="Повторные этапы", customer_stage_id=qual.id, probability_mode="current"
+            ),
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            f"/api/reference-admin/customer_stage/{lead.id}",
+            json={"name": lead.name, "probability": 44},
+        ).status_code
+        == 200
+    )
+    second_visit_current = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(
+            db, name="Повторные этапы", customer_stage_id=lead.id, probability_mode="current"
+        ),
+    )
+    assert second_visit_current.status_code == 200
+    assert second_visit_current.json()["probability"] == 44
+
+    assert (
+        client.put(
+            f"/api/projects/{pid}",
+            json=customer_payload(
+                db, name="Повторные этапы", customer_stage_id=qual.id, probability_mode="current"
+            ),
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            f"/api/reference-admin/customer_stage/{lead.id}",
+            json={"name": lead.name, "probability": 55},
+        ).status_code
+        == 200
+    )
+    third_visit_prev = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(
+            db, name="Повторные этапы", customer_stage_id=lead.id, probability_mode="previous"
+        ),
+    )
+    assert third_visit_prev.status_code == 200, third_visit_prev.text
+    assert third_visit_prev.json()["probability"] == 44
+
+
+def test_non_admin_cannot_override_probability_but_can_choose_probability_mode_and_return_from_success(client, db):
+    from conftest import login
+
+    login(client, db, "manager1@example.com")
+    lead = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "lead")
+    )
+    success = db.scalar(
+        select(ReferenceValue).where(ReferenceValue.category == "customer_stage", ReferenceValue.code == "success")
+    )
+    created = _create(client, db, name="Проект менеджера", customer_stage_id=lead.id)
+    pid = created["id"]
+
+    # Обычный пользователь не может вручную переопределять вероятность без смены этапа (403)
+    forbidden = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(db, name="Проект менеджера", customer_stage_id=lead.id, probability_override=99),
+    )
+    assert forbidden.status_code == 403
+
+    # Переход на success (100%) и возврат обратно на активный этап lead разрешён
+    to_success = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(db, name="Проект менеджера", customer_stage_id=success.id),
+    )
+    assert to_success.status_code == 200, to_success.text
+    assert to_success.json()["probability"] == 100
+
+    reopened = client.put(
+        f"/api/projects/{pid}",
+        json=customer_payload(
+            db, name="Проект менеджера", customer_stage_id=lead.id, probability_mode="previous"
+        ),
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["probability"] == 10
+    assert reopened.json()["customer_stage"]["id"] == lead.id
+

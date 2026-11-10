@@ -233,6 +233,9 @@ class ProjectOut(ORM):
     period_plan: str
     created_at: datetime
     updated_at: datetime
+    visited_stage_probabilities: dict[str, int | None] = Field(
+        default_factory=dict, json_schema_extra={"readOnly": True}
+    )
     financial_entries: list["ProjectFinancialEntryOut"] = Field(default_factory=list)
 
 

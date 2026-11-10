@@ -85,12 +85,36 @@ class HistoryFormatter:
             }
             name = User.full_name if model == User else model.name
             self.names[model] = dict(db.execute(select(model.id, name).where(model.id.in_(ids))).all()) if ids else {}
+        stage_ids = {
+            snapshot["customer_stage_id"]
+            for snapshot in snapshots
+            if type(snapshot.get("customer_stage_id")) is int
+        }
+        self.customer_stage_names: dict[int, str] = (
+            dict(
+                db.execute(
+                    select(ReferenceValue.id, ReferenceValue.name).where(
+                        ReferenceValue.category == "customer_stage",
+                        ReferenceValue.id.in_(stage_ids),
+                    )
+                ).all()
+            )
+            if stage_ids
+            else {}
+        )
 
     def reference(self, field: str, snapshot: dict) -> str:
         value = snapshot.get(field)
         if value is None:
             return "Не задано"
         labels = snapshot.get("_labels")
+        if field == "customer_stage_id":
+            stage_name = self.customer_stage_names.get(value) if type(value) is int else None
+            if stage_name:
+                return stage_name
+            if isinstance(labels, dict) and isinstance(labels.get(field), str):
+                return labels[field]
+            return "Значение справочника недоступно"
         if isinstance(labels, dict) and isinstance(labels.get(field), str):
             return labels[field]
         name = self.names[REFERENCE_MODELS[field]].get(value) if type(value) is int else None
@@ -323,6 +347,15 @@ def _history_note(action: str, payload: dict, changes: list[ProjectHistoryChange
         for field in REFERENCE_MODELS:
             if snapshot.get(field) is not None and (not isinstance(labels, dict) or field not in labels):
                 return "В старой записи названия справочников не сохранены; показаны их текущие значения."
+    if action == "update" and any(change.field == "customer_stage_id" for change in changes):
+        transition = payload.get("stage_transition")
+        if isinstance(transition, dict):
+            direction = transition.get("direction")
+            if direction == "stage_up":
+                return "Направление перехода этапа: вперёд."
+            if direction == "stage_down":
+                return "Направление перехода этапа: назад."
+        return "Направление перехода этапа: не определено."
     return None
 
 

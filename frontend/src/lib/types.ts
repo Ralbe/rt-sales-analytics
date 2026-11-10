@@ -90,6 +90,7 @@ export interface Project {
   updated_at: string;
   financial_entries: FinancialEntry[];
   archived_at?: string | null;
+  visited_stage_probabilities?: Record<string, number | null>;
 }
 
 export interface FinancialEntry {

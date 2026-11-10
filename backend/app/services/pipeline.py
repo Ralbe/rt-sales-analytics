@@ -218,6 +218,46 @@ def _stage_at(timeline: list[tuple[datetime, int]], moment: date) -> int | None:
     return current
 
 
+def _period_transition_direction(in_period: list[AuditLog]) -> str | None:
+    """Возвращает направление перехода этапа в периоде по зафиксированным метаданным события.
+
+    Не использует текущие позиции ReferenceValue для старых событий, чтобы перестановка этапов
+    в справочнике никогда не переписывала направление исторических переходов задним числом.
+    """
+    transitions: list[dict | None] = []
+    for event in in_period:
+        if event.action != "update" or not isinstance(event.payload, dict):
+            continue
+        before, after = event.payload.get("before"), event.payload.get("after")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            continue
+        b_id, a_id = before.get("customer_stage_id"), after.get("customer_stage_id")
+        if type(b_id) is int and type(a_id) is int and b_id != a_id:
+            t = event.payload.get("stage_transition")
+            transitions.append(t if isinstance(t, dict) else None)
+    if not transitions or any(t is None for t in transitions):
+        return None
+    valid = [t for t in transitions if t is not None]
+    if len(valid) == 1:
+        direction = valid[0].get("direction")
+        return direction if direction in ("stage_up", "stage_down") else None
+    consistent = all(
+        valid[i].get("to_stage_id") == valid[i + 1].get("from_stage_id")
+        and valid[i].get("to_position") == valid[i + 1].get("from_position")
+        for i in range(len(valid) - 1)
+    )
+    first_pos = valid[0].get("from_position")
+    last_pos = valid[-1].get("to_position")
+    if consistent and type(first_pos) is int and type(last_pos) is int:
+        if last_pos > first_pos:
+            return "stage_up"
+        if last_pos < first_pos:
+            return "stage_down"
+        return None
+    direction = valid[-1].get("direction")
+    return direction if direction in ("stage_up", "stage_down") else None
+
+
 def project_changes(project: Project, events: list[AuditLog], start: date, end: date,
                     positions: dict[int, int], codes: dict[int, str]) -> list[str]:
     """Индикаторы изменений проекта за период [start, end] (даты UTC, включительно)."""
@@ -236,9 +276,10 @@ def project_changes(project: Project, events: list[AuditLog], start: date, end: 
             base = timeline[0][1]
         final = _stage_at(timeline, end)
         if base is not None and final is not None and base != final:
-            if positions.get(final, 0) > positions.get(base, 0):
+            direction = _period_transition_direction(in_period)
+            if direction == "stage_up":
                 found.append("stage_up")
-            elif positions.get(final, 0) < positions.get(base, 0):
+            elif direction == "stage_down":
                 found.append("stage_down")
             if codes.get(final) == SUCCESS_STAGE_CODE:
                 found.append("implemented")
@@ -281,7 +322,11 @@ def gantt(db: Session, project: Project, today: date) -> dict:
     )).all())
     stages = []
     for visit in visits(project, events, cutoff(today)):
-        label = visit.label or names.get(visit.stage) or STAGE_LABELS.get(visit.stage, "Этап")
+        label = (
+            (names.get(visit.stage) or visit.label)
+            if isinstance(visit.stage, int)
+            else visit.label
+        ) or STAGE_LABELS.get(visit.stage, "Этап")
         for start, end in visit.pieces:
             stages.append({"label": label, "start": start, "end": end,
                            "completed": visit.completed, "known_start": visit.known_start,

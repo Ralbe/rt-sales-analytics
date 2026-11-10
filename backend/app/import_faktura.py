@@ -86,7 +86,9 @@ def lock_imports(db: Session):
 
 
 def _reference(db: Session, category: str) -> dict[str, ReferenceValue]:
-    refs = db.scalars(select(ReferenceValue).where(ReferenceValue.category == category)).all()
+    refs = db.scalars(
+        select(ReferenceValue).where(ReferenceValue.category == category, ReferenceValue.is_active.is_(True))
+    ).all()
     return {norm(r.name).casefold(): r for r in refs}
 
 
