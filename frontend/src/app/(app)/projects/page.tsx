@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { ChangeBadges } from "@/components/ChangeBadges";
+import { ClampedTextCell, FullTextDialog, type ExpandedCellState } from "@/components/ClampedTextCell";
 import { MultiSelect } from "@/components/MultiSelect";
 import { PipelineSummary } from "@/components/PipelineSummary";
 import { QueryState } from "@/components/QueryState";
@@ -46,28 +47,45 @@ function CreationMarker({ value, from, to }: { value: string; from: string; to: 
   ) : null;
 }
 
-const COLUMNS: { key: string; label: string; sort?: string; num?: boolean; width?: number }[] = [
-  { key: "name", label: "Проект", sort: "name", width: 280 },
-  { key: "client", label: "Клиент", width: 260 },
-  { key: "client_inn", label: "ИНН", sort: "client_inn" },
-  { key: "segment", label: "Сегмент" },
-  { key: "service", label: "Услуга" },
-  { key: "manager", label: "Ответственный" },
-  { key: "stage", label: "Стадия" },
-  { key: "customer_stage_id", label: "Этап по ТЗ", sort: "customer_stage_id", width: 240 },
-  { key: "implementation_year", label: "Год реализации", sort: "implementation_year" },
-  { key: "probability", label: "Вероятность, %", num: true },
-  { key: "amount", label: "Сумма, ₽", sort: "amount", num: true, width: 210 },
-  { key: "weighted_amount", label: "С учётом вероятности, ₽", num: true, width: 210 },
-  { key: "cost", label: "Себестоимость, ₽", num: true, width: 210 },
-  { key: "margin", label: "Маржа, %", num: true },
-  { key: "close", label: "План закрытия", sort: "expected_close_date" },
-  { key: "project_status", label: "Статус проекта", width: 280 },
-  { key: "realized_work", label: "Сделано за период", width: 320 },
-  { key: "period_plan", label: "Планы на период", width: 320 },
-  { key: "profit", label: "Прибыль, ₽", num: true },
-  { key: "project_sheet", label: "Лист проекта", width: 170 },
+const COLUMNS: {
+  key: string;
+  label: string;
+  sort?: string;
+  num?: boolean;
+  minWidth?: number;
+  maxWidth?: number;
+}[] = [
+  { key: "name", label: "Проект", sort: "name", minWidth: 220, maxWidth: 280 },
+  { key: "client", label: "Клиент", minWidth: 200, maxWidth: 260 },
+  { key: "client_inn", label: "ИНН", sort: "client_inn", minWidth: 130 },
+  { key: "segment", label: "Сегмент", minWidth: 140 },
+  { key: "service", label: "Услуга", minWidth: 150 },
+  { key: "manager", label: "Ответственный", minWidth: 150 },
+  { key: "stage", label: "Стадия", minWidth: 140 },
+  { key: "customer_stage_id", label: "Этап по ТЗ", sort: "customer_stage_id", minWidth: 180, maxWidth: 240 },
+  { key: "implementation_year", label: "Год реализации", sort: "implementation_year", minWidth: 130 },
+  { key: "probability", label: "Вероятность, %", num: true, minWidth: 120 },
+  { key: "amount", label: "Сумма, ₽", sort: "amount", num: true, minWidth: 170 },
+  { key: "weighted_amount", label: "С учётом вероятности, ₽", num: true, minWidth: 190 },
+  { key: "cost", label: "Себестоимость, ₽", num: true, minWidth: 170 },
+  { key: "margin", label: "Маржа, %", num: true, minWidth: 110 },
+  { key: "close", label: "План закрытия", sort: "expected_close_date", minWidth: 130 },
+  { key: "project_status", label: "Статус проекта", minWidth: 220, maxWidth: 280 },
+  { key: "realized_work", label: "Сделано за период", minWidth: 240, maxWidth: 320 },
+  { key: "period_plan", label: "Планы на период", minWidth: 240, maxWidth: 320 },
+  { key: "profit", label: "Прибыль, ₽", num: true, minWidth: 150 },
+  { key: "project_sheet", label: "Лист проекта", minWidth: 150 },
 ];
+
+const COL_STYLE = Object.fromEntries(
+  COLUMNS.map((c) => [
+    c.key,
+    {
+      minWidth: c.minWidth ?? 140,
+      ...(c.maxWidth ? { maxWidth: c.maxWidth } : {}),
+    },
+  ]),
+);
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -78,6 +96,7 @@ export default function ProjectsPage() {
     label(key) === PROJECT_FIELD_DEFAULTS[key].label ? original : label(key);
   const refs = refsQuery.data;
   const [printProject, setPrintProject] = useState<Project>();
+  const [expandedCell, setExpandedCell] = useState<ExpandedCellState | null>(null);
   const [search, setSearch] = useState("");
   const [segments, setSegments] = useState<number[]>([]);
   const [services, setServices] = useState<number[]>([]);
@@ -180,6 +199,38 @@ export default function ProjectsPage() {
   };
   const stageName = (id: Stage | null) => id === null ? "Не применяется" : refs?.stages.find((s) => s.id === id)?.name ?? id;
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
+  const columnHeading = (colKey: string, fallback: string) =>
+    (COLUMN_FIELDS[colKey] ?? colKey) in PROJECT_FIELD_DEFAULTS
+      ? heading((COLUMN_FIELDS[colKey] ?? colKey) as ProjectFieldKey)
+      : fallback;
+
+  useEffect(() => {
+    if (!expandedCell || !data) return;
+    const currentProject = data.items.find((item) => item.id === expandedCell.projectId);
+    if (!currentProject) {
+      setExpandedCell(null);
+      return;
+    }
+    const latestValue =
+      expandedCell.fieldKey === "name"
+        ? currentProject.name
+        : expandedCell.fieldKey === "client"
+          ? currentProject.client.name
+          : expandedCell.fieldKey === "project_status"
+            ? (currentProject.project_status ?? "")
+            : expandedCell.fieldKey === "realized_work"
+              ? currentProject.realized_work
+              : expandedCell.fieldKey === "period_plan"
+                ? currentProject.period_plan
+                : "";
+    if (!latestValue) {
+      setExpandedCell(null);
+    } else if (latestValue !== expandedCell.text || currentProject.name !== expandedCell.projectName) {
+      setExpandedCell((prev) =>
+        prev ? { ...prev, text: latestValue, projectName: currentProject.name } : null,
+      );
+    }
+  }, [data, expandedCell]);
 
   return (
     <>
@@ -275,10 +326,7 @@ export default function ProjectsPage() {
         {printProject && <div className="card project-sheet-preview"><div className="gantt-toolbar"><h2>{printProject.name}</h2><button className="btn" onClick={() => setPrintProject(undefined)}>Закрыть лист</button></div><ProjectPrint key={printProject.id} project={printProject} /></div>}
         <QueryState query={projectsQuery} title="Не удалось загрузить проекты" loadingText="Загружаем проекты…" />
         <div className="card" style={{ overflow: "auto", opacity: isFetching ? 0.7 : 1 }}>
-          <table className="table" style={{ tableLayout: "fixed", minWidth: COLUMNS.reduce((sum, c) => sum + (c.width ?? 160), 0) }}>
-            <colgroup>
-              {COLUMNS.map((c) => <col key={c.key} style={{ width: c.width ?? 160 }} />)}
-            </colgroup>
+          <table className="table projects-table">
             <thead>
               <tr>
                 {COLUMNS.map((c) => (
@@ -286,12 +334,11 @@ export default function ProjectsPage() {
                     key={c.key}
                     scope="col"
                     data-field={c.key}
+                    style={COL_STYLE[c.key]}
                     className={`${c.sort ? "sortable" : ""} ${c.num ? "num" : ""}`}
                     onClick={c.sort ? () => toggleSort(c.sort!) : undefined}
                   >
-                    {(COLUMN_FIELDS[c.key] ?? c.key) in PROJECT_FIELD_DEFAULTS
-                      ? heading(COLUMN_FIELDS[c.key] ?? c.key as ProjectFieldKey)
-                      : c.label}
+                    {columnHeading(c.key, c.label)}
                     {c.sort && sort.replace("-", "") === c.sort ? (sort.startsWith("-") ? " ↓" : " ↑") : ""}
                   </th>
                 ))}
@@ -300,13 +347,34 @@ export default function ProjectsPage() {
             <tbody style={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
               {data?.items.map((p) => (
                 <tr key={p.id} className="clickable" onClick={() => router.push(`/projects/${p.id}`)}>
-                  <td>{p.name}<CreationMarker value={p.created_at} from={error ? "" : createdFrom} to={createdTo} /><ChangeBadges indicators={changes.get(p.id)?.filter((key) => key !== "new")} /></td>
-                  <td>{p.client.name}</td>
-                  <td>{p.client_inn || "—"}</td>
-                  <td>{p.segment.name}</td>
-                  <td>{p.service.name}</td>
-                  <td>{managerName(p.manager, refs)}</td>
-                  <td>
+                  <td style={COL_STYLE.name}>
+                    <ClampedTextCell
+                      text={p.name}
+                      projectId={p.id}
+                      projectName={p.name}
+                      fieldKey="name"
+                      fieldLabel={columnHeading("name", "Проект")}
+                      onExpand={setExpandedCell}
+                    >
+                      <CreationMarker value={p.created_at} from={error ? "" : createdFrom} to={createdTo} />
+                      <ChangeBadges indicators={changes.get(p.id)?.filter((key) => key !== "new")} />
+                    </ClampedTextCell>
+                  </td>
+                  <td style={COL_STYLE.client}>
+                    <ClampedTextCell
+                      text={p.client.name}
+                      projectId={p.id}
+                      projectName={p.name}
+                      fieldKey="client"
+                      fieldLabel={columnHeading("client", "Клиент")}
+                      onExpand={setExpandedCell}
+                    />
+                  </td>
+                  <td style={COL_STYLE.client_inn}>{p.client_inn || "—"}</td>
+                  <td style={COL_STYLE.segment}>{p.segment.name}</td>
+                  <td style={COL_STYLE.service}>{p.service.name}</td>
+                  <td style={COL_STYLE.manager}>{managerName(p.manager, refs)}</td>
+                  <td style={COL_STYLE.stage}>
                     <span
                       className={`badge ${p.stage === "won" ? "won" : p.stage === "lost" ? "lost" : ""}`}
                       style={{ whiteSpace: "normal" }}
@@ -314,19 +382,46 @@ export default function ProjectsPage() {
                       {stageName(p.stage)}
                     </span>
                   </td>
-                  <td>{p.customer_stage?.name ?? "—"}</td>
-                  <td>{p.implementation_year ?? "—"}</td>
-                  <td className="num">{p.probability}%</td>
-                  <td className="num">{fullAmount(p.amount)}</td>
-                  <td className="num">{fullAmount(String(Number(p.amount) * p.probability / 100))}</td>
-                  <td className="num">{fullAmount(p.cost)}</td>
-                  <td className="num">{p.margin_pct === null ? "—" : `${p.margin_pct}%`}</td>
-                  <td>{date(p.expected_close_date)}</td>
-                  <td>{p.project_status || "—"}</td>
-                  <td>{p.realized_work || "—"}</td>
-                  <td>{p.period_plan || "—"}</td>
-                  <td className="num">{fullAmount(p.profit ?? "0")}</td>
-                  <td><button className="btn small" onClick={(e) => { e.stopPropagation(); setPrintProject(p); }}>Лист проекта</button></td>
+                  <td style={COL_STYLE.customer_stage_id}>{p.customer_stage?.name ?? "—"}</td>
+                  <td style={COL_STYLE.implementation_year}>{p.implementation_year ?? "—"}</td>
+                  <td style={COL_STYLE.probability} className="num">{p.probability}%</td>
+                  <td style={COL_STYLE.amount} className="num">{fullAmount(p.amount)}</td>
+                  <td style={COL_STYLE.weighted_amount} className="num">{fullAmount(String(Number(p.amount) * p.probability / 100))}</td>
+                  <td style={COL_STYLE.cost} className="num">{fullAmount(p.cost)}</td>
+                  <td style={COL_STYLE.margin} className="num">{p.margin_pct === null ? "—" : `${p.margin_pct}%`}</td>
+                  <td style={COL_STYLE.close}>{date(p.expected_close_date)}</td>
+                  <td style={COL_STYLE.project_status}>
+                    <ClampedTextCell
+                      text={p.project_status}
+                      projectId={p.id}
+                      projectName={p.name}
+                      fieldKey="project_status"
+                      fieldLabel={columnHeading("project_status", "Статус проекта")}
+                      onExpand={setExpandedCell}
+                    />
+                  </td>
+                  <td style={COL_STYLE.realized_work}>
+                    <ClampedTextCell
+                      text={p.realized_work}
+                      projectId={p.id}
+                      projectName={p.name}
+                      fieldKey="realized_work"
+                      fieldLabel={columnHeading("realized_work", "Сделано за период")}
+                      onExpand={setExpandedCell}
+                    />
+                  </td>
+                  <td style={COL_STYLE.period_plan}>
+                    <ClampedTextCell
+                      text={p.period_plan}
+                      projectId={p.id}
+                      projectName={p.name}
+                      fieldKey="period_plan"
+                      fieldLabel={columnHeading("period_plan", "Планы на период")}
+                      onExpand={setExpandedCell}
+                    />
+                  </td>
+                  <td style={COL_STYLE.profit} className="num">{fullAmount(p.profit ?? "0")}</td>
+                  <td style={COL_STYLE.project_sheet}><button className="btn small" onClick={(e) => { e.stopPropagation(); setPrintProject(p); }}>Лист проекта</button></td>
                 </tr>
               ))}
               {!projectsQuery.error && data && data.items.length === 0 && (
@@ -339,6 +434,9 @@ export default function ProjectsPage() {
             </tbody>
           </table>
         </div>
+        {expandedCell && (
+          <FullTextDialog state={expandedCell} onClose={() => setExpandedCell(null)} />
+        )}
         {data && <div className="pager">
           <span className="muted">Всего: {data?.total ?? "…"}</span>
           <button className="btn small" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
