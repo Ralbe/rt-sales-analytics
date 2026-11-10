@@ -410,7 +410,9 @@ test("реестр: сокращение до 3 строк, кнопка рас�
 
   await expandBtn.click();
   await expect(dialog).toBeVisible();
-  await page.getByLabel("Только открытые проекты", { exact: true }).check({ force: true });
+  await page
+    .getByLabel("Только открытые проекты", { exact: true })
+    .evaluate((el: HTMLInputElement) => el.click());
   await expect(page.locator("tbody tr")).toHaveCount(1);
   await expect(dialog).toHaveCount(0);
 });
