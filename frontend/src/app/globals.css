@@ -114,7 +114,7 @@ label.field > input, label.field > select { font-size: 14px; font-weight: 400; c
 .widget-head .title { flex: 1; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .widget-drag { cursor: grab; }
 .widget-body { flex: 1; min-height: 0; padding: 4px 14px 10px; position: relative; }
-.widget-menu { position: absolute; right: 8px; top: 34px; z-index: 30; padding: 6px; min-width: 200px; }
+.widget-menu { position: fixed; z-index: 1000; padding: 6px; width: max-content; min-width: 200px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow: auto; }
 .widget-menu .group { font-size: 11px; color: var(--muted); padding: 6px 8px 2px; text-transform: uppercase; letter-spacing: .5px; }
 .widget-menu button { display: block; width: 100%; text-align: left; padding: 6px 8px; border: 0; background: none; border-radius: 6px; font: inherit; cursor: pointer; }
 .widget-menu button:hover { background: var(--surface-2); }
