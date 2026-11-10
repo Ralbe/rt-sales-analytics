@@ -347,3 +347,73 @@ for (const invalid of ["2026-02-30", "0000-01-01"]) {
     await expect(page.getByText("Некорректные даты периода в ссылке.")).toHaveCount(0);
   });
 }
+
+test("реестр: сокращение до 3 строк, кнопка раскрытия только при переполнении и модальное окно полного текста", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const longItem = project({
+    id: 42,
+    stage: "won",
+    stage_scheme: "legacy",
+  });
+  const shortItem = project({
+    id: 43,
+    name: "Короткий проект",
+    client: { id: 5, name: "ООО Ромашка" },
+    project_status: "В работе",
+    realized_work: "Сделано вовремя",
+    period_plan: "Завершить в срок",
+    stage: "proposal",
+    stage_scheme: "legacy",
+  });
+  await mockApi(page, [longItem, shortItem]);
+  await page.goto("/projects");
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+
+  // Короткая строка не показывает кнопок раскрытия
+  const shortRow = page.locator("tbody tr").nth(1);
+  await expect(shortRow.locator("button.cell-expand-btn")).toHaveCount(0);
+
+  // Длинная строка показывает ровно 5 кнопок раскрытия (только для 5 целевых текстовых колонок)
+  const longRow = page.locator("tbody tr").nth(0);
+  await expect(longRow.locator("button.cell-expand-btn")).toHaveCount(5);
+
+  // Высота ячейки ограничена 3 строками
+  const statusCell = await cell(page, "project_status", 0);
+  const statusHeight = await statusCell.evaluate((el) => el.clientHeight);
+  expect(statusHeight).toBeLessThanOrEqual(100);
+
+  // Клик по кнопке раскрытия открывает модалку и НЕ переходит на карточку проекта
+  const expandBtn = statusCell.locator("button.cell-expand-btn");
+  await expandBtn.click();
+  await expect(page).toHaveURL(/\/projects$/);
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("full-text-modal-content")).toHaveText(longItem.project_status!);
+
+  // Копирование текста
+  await dialog.getByRole("button", { name: "Скопировать", exact: true }).click();
+  await expect(dialog.getByText("Текст скопирован в буфер обмена")).toBeVisible();
+
+  // Закрытие по Esc возвращает фокус на кнопку раскрытия
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(expandBtn).toBeFocused();
+
+  // Повторное открытие, проверка кнопки «Закрыть» и автозакрытие при фильтрации, скрывающей проект 42
+  await expandBtn.click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(expandBtn).toBeFocused();
+
+  await expandBtn.click();
+  await expect(dialog).toBeVisible();
+  await page
+    .getByLabel("Только открытые проекты", { exact: true })
+    .evaluate((el: HTMLInputElement) => el.click());
+  await expect(page.locator("tbody tr")).toHaveCount(1);
+  await expect(dialog).toHaveCount(0);
+});
+
