@@ -401,10 +401,16 @@ test("реестр: сокращение до 3 строк, кнопка рас�
   await expect(dialog).toHaveCount(0);
   await expect(expandBtn).toBeFocused();
 
-  // Повторное открытие и фильтрация, скрывающая проект 42, автоматически закрывает модалку
+  // Повторное открытие, проверка кнопки «Закрыть» и автозакрытие при фильтрации, скрывающей проект 42
   await expandBtn.click();
   await expect(dialog).toBeVisible();
-  await page.getByLabel("Только открытые проекты", { exact: true }).check();
+  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(expandBtn).toBeFocused();
+
+  await expandBtn.click();
+  await expect(dialog).toBeVisible();
+  await page.getByLabel("Только открытые проекты", { exact: true }).check({ force: true });
   await expect(page.locator("tbody tr")).toHaveCount(1);
   await expect(dialog).toHaveCount(0);
 });
