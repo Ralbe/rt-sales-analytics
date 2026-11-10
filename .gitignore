@@ -9,3 +9,9 @@ node_modules/
 .next/
 *.tsbuildinfo
 .claude/
+.coverage
+htmlcov/
+
+AGENTS.md
+*/AGENTS.md
+
