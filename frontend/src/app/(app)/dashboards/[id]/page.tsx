@@ -71,7 +71,7 @@ function DashboardEditor({ dashboard }: { dashboard: Dashboard }) {
 
   const editable = dashboard.editable;
   const compact = size.width < 700;
-  const rowHeight = compact ? 48 : Math.max(32, (size.height - MARGIN * (ROWS + 1)) / ROWS);
+  const rowHeight = compact ? 48 : Math.max(42, (size.height - MARGIN * (ROWS + 1)) / ROWS);
   const layout: Layout[] = compact
     ? [...widgets].sort((a, b) => a.y - b.y || a.x - b.x).reduce<Layout[]>((items, w) => {
       const previous = items.at(-1);

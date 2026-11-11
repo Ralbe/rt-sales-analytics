@@ -40,15 +40,17 @@ export function WidgetCard({ widget, filters, editable, onChange, onConfigure, o
       const trigger = triggerRef.current?.getBoundingClientRect();
       const popup = menuRef.current?.getBoundingClientRect();
       if (!trigger || !popup) return;
-      const gutter = 8;
+      const offsetWidth = menuRef.current?.offsetWidth ?? 0;
+      const zoom = offsetWidth > 0 ? popup.width / offsetWidth : 1;
+      const gutter = 8 * zoom;
       const left = Math.max(gutter, Math.min(trigger.right - popup.width, window.innerWidth - popup.width - gutter));
       const below = window.innerHeight - trigger.bottom - gutter;
       const above = trigger.top - gutter;
       const preferredTop = below >= popup.height || below >= above
-        ? trigger.bottom + 4
-        : trigger.top - popup.height - 4;
+        ? trigger.bottom + 4 * zoom
+        : trigger.top - popup.height - 4 * zoom;
       const top = Math.max(gutter, Math.min(preferredTop, window.innerHeight - popup.height - gutter));
-      setMenuPosition({ left, top });
+      setMenuPosition({ left: left / zoom, top: top / zoom });
     };
     place();
     window.addEventListener("resize", place);

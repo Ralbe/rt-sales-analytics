@@ -106,7 +106,7 @@ export function Sidebar({ user }: { user: User }) {
       <div className="user">
         <div>{user.full_name}</div>
         <FontSettings />
-        <button className="link" style={{ padding: "8px 0 0" }} onClick={logout}>
+        <button className="link" onClick={logout}>
           Выйти
         </button>
       </div>

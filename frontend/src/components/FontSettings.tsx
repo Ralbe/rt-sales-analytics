@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "rt-font-settings";
 
@@ -47,11 +47,20 @@ export function FontSettingsApplier() {
 /** Выбор шрифта и размера текста; хранится в браузере пользователя. */
 export function FontSettings() {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => setSettings(read()), []);
+  const keepVisible = () => {
+    requestAnimationFrame(() => {
+      const container = detailsRef.current?.closest(".user") ?? detailsRef.current;
+      container?.scrollIntoView({ block: "nearest" });
+    });
+  };
   const update = (patch: Partial<Settings>) => {
     const next = { ...settings, ...patch };
     setSettings(next);
     apply(next);
+    window.dispatchEvent(new Event("resize"));
+    keepVisible();
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch {
@@ -59,7 +68,13 @@ export function FontSettings() {
     }
   };
   return (
-    <details className="font-settings-toggle">
+    <details
+      ref={detailsRef}
+      className="font-settings-toggle"
+      onToggle={(e) => {
+        if (e.currentTarget.open) keepVisible();
+      }}
+    >
       <summary>Шрифт и размер текста</summary>
       <div className="font-settings">
       <label>

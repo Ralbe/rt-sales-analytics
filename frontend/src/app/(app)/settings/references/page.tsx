@@ -728,6 +728,8 @@ const backdropStyle: React.CSSProperties = {
 const modalStyle: React.CSSProperties = {
   width: "100%",
   maxWidth: 480,
+  maxHeight: "calc(var(--viewport-height) - 32px)",
+  overflowY: "auto",
   padding: 24,
 };
 
