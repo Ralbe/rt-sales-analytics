@@ -29,7 +29,7 @@ h1 { font-size: 20px; margin: 0; font-weight: 600; }
 h2 { font-size: 16px; margin: 0; font-weight: 600; }
 
 /* --- Каркас приложения: всё в пределах экрана --- */
-.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: minmax(0, 1fr); height: var(--viewport-height); overflow: hidden; }
+.app { display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: var(--viewport-height); overflow: hidden; }
 .main { display: flex; flex-direction: column; min-width: 0; height: var(--viewport-height); overflow: hidden; }
 .page-header { display: flex; align-items: center; flex-shrink: 0; gap: 12px; padding: 14px 20px 10px; flex-wrap: wrap; }
 .page-header .spacer { flex: 1; }
@@ -164,7 +164,7 @@ label.field > input, label.field > select { font-size: 14px; font-weight: 400; c
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
 
 @media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: var(--viewport-height); overflow: visible; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; height: auto; min-height: var(--viewport-height); overflow: visible; }
   .main { height: auto; overflow: visible; }
   .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; height: auto; padding: 8px 12px; overflow: visible; }
   .sidebar .section { display: none; }
