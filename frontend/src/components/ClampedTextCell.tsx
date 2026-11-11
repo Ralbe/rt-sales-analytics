@@ -53,9 +53,21 @@ export function ClampedTextCell({
       frameId = requestAnimationFrame(measureOverflow);
     });
     observer.observe(el);
+    const styleObserver =
+      typeof MutationObserver !== "undefined"
+        ? new MutationObserver(() => {
+            cancelAnimationFrame(frameId);
+            frameId = requestAnimationFrame(measureOverflow);
+          })
+        : null;
+    styleObserver?.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style"],
+    });
     return () => {
       cancelAnimationFrame(frameId);
       observer.disconnect();
+      styleObserver?.disconnect();
     };
   }, [measureOverflow, value]);
 

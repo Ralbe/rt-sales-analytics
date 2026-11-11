@@ -29,22 +29,24 @@ h1 { font-size: 20px; margin: 0; font-weight: 600; }
 h2 { font-size: 16px; margin: 0; font-weight: 600; }
 
 /* --- Каркас приложения: всё в пределах экрана --- */
-.app { display: grid; grid-template-columns: 232px 1fr; height: var(--viewport-height); overflow: hidden; }
+.app { display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: var(--viewport-height); overflow: hidden; }
 .main { display: flex; flex-direction: column; min-width: 0; height: var(--viewport-height); overflow: hidden; }
-.page-header { display: flex; align-items: center; gap: 12px; padding: 14px 20px 10px; flex-wrap: wrap; }
+.page-header { display: flex; align-items: center; flex-shrink: 0; gap: 12px; padding: 14px 20px 10px; flex-wrap: wrap; }
 .page-header .spacer { flex: 1; }
 .dashboard-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
 .dashboard-heading > span { font-size: 13px; }
 .page-body { flex: 1; min-height: 0; padding: 0 20px 16px; overflow: auto; }
 
-.sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; overflow-y: auto; }
+.sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; height: var(--viewport-height); min-height: 0; padding: 16px 12px; gap: 4px; overflow-y: auto; overflow-x: hidden; }
+.sidebar > * { flex-shrink: 0; }
 .sidebar .brand { font-weight: 700; color: #fff; font-size: 16px; padding: 4px 10px 14px; letter-spacing: .2px; }
 .sidebar .brand span { color: #FF4F12; }
 .sidebar .section { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; opacity: .6; padding: 14px 10px 4px; }
-.sidebar a, .sidebar button.link { display: block; color: var(--sidebar-text); padding: 7px 10px; border-radius: 8px; font-size: 14px; background: none; border: 0; text-align: left; width: 100%; cursor: pointer; font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar a, .sidebar button.link { display: block; flex-shrink: 0; color: var(--sidebar-text); padding: 7px 10px; border-radius: 8px; font-size: 14px; line-height: 1.45; background: none; border: 0; text-align: left; width: 100%; cursor: pointer; font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sidebar a:hover, .sidebar button.link:hover { background: rgba(255,255,255,.06); }
 .sidebar a.active { background: var(--sidebar-active); color: #fff; }
-.sidebar .user { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid rgba(255,255,255,.1); font-size: 13px; }
+.sidebar .user { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid rgba(255,255,255,.1); font-size: 13px; overflow-wrap: anywhere; }
+.sidebar .user button.link { padding: 8px 0 0; }
 
 /* --- Элементы управления --- */
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
@@ -101,29 +103,31 @@ label.field > input, label.field > select { font-size: 14px; font-weight: 400; c
 .code-input { letter-spacing: 8px; font-size: 22px; text-align: center; height: 48px; }
 
 /* --- Фильтры --- */
-.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.ms { position: relative; }
-.ms-panel { position: absolute; top: 38px; left: 0; z-index: 50; min-width: 240px; max-height: 320px; overflow: auto; padding: 6px; }
+.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.filters select, .filters .input { max-width: 100%; }
+.ms { position: relative; max-width: 100%; }
+.ms > .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ms-panel { position: absolute; top: 38px; left: 0; z-index: 50; min-width: 240px; max-width: min(360px, calc(100vw / var(--ui-scale) - 32px)); max-height: min(320px, calc(var(--viewport-height) - 96px)); overflow: auto; padding: 6px; }
 .ms-panel label { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .ms-panel label:hover { background: var(--surface-2); }
 
 /* --- Дашборд --- */
 .grid-host { height: 100%; min-height: 0; position: relative; }
 .widget { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.widget-head { display: flex; align-items: center; flex-shrink: 0; gap: 6px; padding: 8px 10px 0 14px; min-height: 36px; }
+.widget-head { display: flex; align-items: center; flex-shrink: 0; gap: 6px; padding: 6px 10px 0 14px; min-height: 32px; }
 .widget-head .title { flex: 1; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .widget-drag { cursor: grab; }
-.widget-body { flex: 1; min-height: 0; padding: 4px 14px 10px; position: relative; }
-.widget-menu { position: fixed; z-index: 1000; padding: 6px; width: max-content; min-width: 200px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow: auto; }
+.widget-body { flex: 1; min-height: 0; padding: 4px 14px 8px; position: relative; overflow: auto; }
+.widget-menu { position: fixed; z-index: 1000; padding: 6px; width: max-content; min-width: 200px; max-width: calc(100vw / var(--ui-scale) - 16px); max-height: calc(var(--viewport-height) - 16px); overflow: auto; }
 .widget-menu .group { font-size: 11px; color: var(--muted); padding: 6px 8px 2px; text-transform: uppercase; letter-spacing: .5px; }
 .widget-menu button { display: block; width: 100%; text-align: left; padding: 6px 8px; border: 0; background: none; border-radius: 6px; font: inherit; cursor: pointer; }
 .widget-menu button:hover { background: var(--surface-2); }
 .widget-menu button.on { color: var(--accent); font-weight: 600; }
 .react-grid-item.react-grid-placeholder { background: var(--accent); opacity: .15; border-radius: var(--radius); }
 
-.kpi { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: 2px; }
-.kpi .value { font-size: clamp(20px, 2.2vw, 30px); font-weight: 700; letter-spacing: -.5px; }
-.kpi .delta { font-size: 13px; }
+.kpi { display: flex; flex-direction: column; justify-content: safe center; min-height: 100%; height: auto; gap: 2px; }
+.kpi .value { font-size: clamp(18px, calc(2vw / var(--ui-scale)), 28px); line-height: 1.2; font-weight: 700; letter-spacing: -.5px; overflow-wrap: anywhere; }
+.kpi .delta { font-size: 13px; line-height: 1.3; }
 .kpi .delta.up { color: var(--good); }
 .kpi .delta.down { color: var(--bad); }
 
@@ -138,9 +142,9 @@ label.field > input, label.field > select { font-size: 14px; font-weight: 400; c
 .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: flex-end; padding: 14px 0 0; }
 
 /* --- Форма проекта: один экран --- */
-.form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 24px; padding: 20px; }
-.form-grid .col { display: flex; flex-direction: column; gap: 12px; }
-.form-grid .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px 24px; padding: 20px; }
+.form-grid .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.form-grid .row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px; }
 .form-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 20px; border-top: 1px solid var(--border); }
 .fieldset { min-width: 0; margin: 0 20px 20px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
 .fieldset legend { padding: 0 8px; font-weight: 600; }
@@ -150,20 +154,23 @@ label.field > input, label.field > select { font-size: 14px; font-weight: 400; c
 .combo { position: relative; }
 .combo-list { position: absolute; top: 38px; left: 0; right: 0; z-index: 40; max-height: 260px; overflow: auto; padding: 4px; }
 .combo-list button { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 7px 8px; border: 0; background: none; border-radius: 6px; font: inherit; cursor: pointer; }
+.combo-list button > span:first-child { overflow-wrap: anywhere; }
+.combo-list button > .muted { flex-shrink: 0; white-space: nowrap; }
 .combo-list button.hl, .combo-list button:hover { background: var(--accent-soft); }
 .combo-list .create { color: var(--accent); border-top: 1px solid var(--border); margin-top: 4px; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(20, 16, 40, .45); display: grid; place-items: center; z-index: 100; padding: 16px; }
-.modal { width: 100%; max-width: 460px; padding: 20px; display: flex; flex-direction: column; gap: 10px; max-height: 90vh; overflow: auto; }
+.modal { width: 100%; max-width: 460px; padding: 20px; display: flex; flex-direction: column; gap: 10px; max-height: calc(var(--viewport-height) - 32px); overflow: auto; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
 
 @media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: var(--viewport-height); overflow: visible; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; height: auto; min-height: var(--viewport-height); overflow: visible; }
   .main { height: auto; overflow: visible; }
-  .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 12px; }
+  .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; height: auto; padding: 8px 12px; overflow: visible; }
   .sidebar .section { display: none; }
   .sidebar .user { width: 100%; margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
-  .sidebar a, .sidebar button.link { width: auto; }
+  .sidebar .user button.link { padding: 4px 0; }
+  .sidebar a, .sidebar button.link { width: auto; max-width: 100%; }
   .form-grid { grid-template-columns: 1fr; }
   .page-header, .page-body { padding-left: 16px; padding-right: 16px; }
 }
@@ -262,10 +269,10 @@ label.field > input, label.field > select { font-size: 14px; font-weight: 400; c
 .badge.change-implemented { background: #1a8f5a; color: #fff; border-color: #1a8f5a; }
 
 /* Стартовая страница */
-.overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px; }
-.overview-kpis .card { padding: 14px 16px; }
+.overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px; margin-bottom: 12px; }
+.overview-kpis .card { padding: 14px 16px; min-width: 0; }
 .overview-kpis .label { font-size: 13px; color: var(--muted); }
-.overview-kpis .kpi { height: auto; }
+.overview-kpis .kpi { height: auto; min-height: 0; }
 .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 12px; margin-bottom: 12px; }
 .overview-grid .card { padding: 12px 14px; overflow: auto; }
 .overview-grid h2 { font-size: 15px; margin: 0 0 8px; }
@@ -297,8 +304,8 @@ label.field > input, label.field > select { font-size: 14px; font-weight: 400; c
 .font-settings-toggle { margin-top: 6px; }
 .font-settings-toggle > summary { cursor: pointer; font-size: 12px; opacity: .85; }
 .font-settings { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; }
-.font-settings label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; opacity: .85; }
-.font-settings .input { height: 28px; padding: 0 6px; font-size: 12px; width: auto; max-width: 150px; }
+.font-settings label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; opacity: .85; min-width: 0; max-width: 100%; }
+.font-settings .input { height: 28px; padding: 0 6px; font-size: 12px; width: auto; max-width: 100%; }
 
 /* Общие элементы новых таблиц и диаграмм. */
 button, input, select, textarea { font-family: var(--font); }
@@ -384,7 +391,7 @@ button, input, select, textarea { font-family: var(--font); }
 .full-text-modal-header { display: flex; flex-direction: column; gap: 4px; }
 .full-text-modal-subtitle { font-size: 13px; overflow-wrap: anywhere; }
 .full-text-modal-body {
-  max-height: min(60vh, 420px);
+  max-height: min(calc(var(--viewport-height) * 0.6), 420px);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px;
