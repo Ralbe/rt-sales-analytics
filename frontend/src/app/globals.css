@@ -37,7 +37,8 @@ h2 { font-size: 16px; margin: 0; font-weight: 600; }
 .dashboard-heading > span { font-size: 13px; }
 .page-body { flex: 1; min-height: 0; padding: 0 20px 16px; overflow: auto; }
 
-.sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; overflow-y: auto; }
+.sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; padding: 16px 12px; gap: 4px; min-height: 0; overflow-y: auto; }
+.sidebar > * { flex-shrink: 0; }
 .sidebar .brand { font-weight: 700; color: #fff; font-size: 16px; padding: 4px 10px 14px; letter-spacing: .2px; }
 .sidebar .brand span { color: #FF4F12; }
 .sidebar .section { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; opacity: .6; padding: 14px 10px 4px; }
